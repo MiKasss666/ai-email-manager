@@ -295,3 +295,11 @@ py -3 run.py summarize [letters]  # 生成并发送总结报告；letters 如 s 
 程序会把**邮件内容**（发件人、主题、正文片段）发送给你自己配置的 AI 服务商，请自行确认该服务商的隐私条款；API Key 明文保存在本机 `config.json` 中，不要把它提交到任何仓库。
 
 The app sends **email content** (sender, subject, body excerpts) to the AI provider *you* configure — check that provider's privacy policy yourself. Your API key is stored in plain text in the local `config.json`; never commit it to any repository.
+
+---
+
+## 声明 / Credit
+
+**Designed by pkfok@hkust**
+
+香港科技大学（HKUST）· Hong Kong University of Science and Technology
