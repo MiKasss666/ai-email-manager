@@ -1,0 +1,20 @@
+# 换行符策略 —— 这几条是踩过坑的，别删
+#
+# .bat 必须保持 CRLF：cmd.exe 解析 LF-only 的批处理会错乱
+# （多行括号块和 goto 标签会失效，表现是批处理跑一半就退出）。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 源码与文档交给 git 正常处理
+*.py   text
+*.md   text
+*.txt  text
+.gitignore    text
+.gitattributes text
+
+# 二进制：不做换行转换，也不要在 diff 里试图显示
+*.ico  binary
+*.exe  binary
+*.dll  binary
+*.pyd  binary
+*.zip  binary

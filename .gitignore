@@ -1,0 +1,22 @@
+# 运行时生成的本地文件（含个人信息），不随代码分发
+config.json
+watch_state.json
+config.json.tmp
+app.log
+
+# Python
+__pycache__/
+*.py[cod]
+
+# PyInstaller 中间产物
+build/
+dist/
+*.spec
+*.spec.bak
+
+# 打包产物：用 GitHub Releases 分发，不入库
+# （1025 个文件 / 29 MB；入库会让每次重新打包产生上千个二进制改动，git 历史迅速膨胀）
+EmailManager/
+
+# 发布用的压缩包
+*.zip
