@@ -11,11 +11,11 @@
 > Unzip → double-click `EmailManager.exe`. **No Python required.**
 
 > ⚠️ **别点右上角绿色的 `Code` → `Download ZIP`**
-> 那个下载的是**源码**（约 360 KB，里面**没有 exe**），只有想改代码的开发者才需要。
+> 那个下载的是**源码**（实测 211 KB / 31 个文件，里面**没有 exe**，双击没反应），只有想改代码的开发者才需要。
 > 普通用户请用上面那个 **Download** 链接，或到 [Releases](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest) 页面下载 `EmailManager.zip`（13 MB）。
 >
 > ⚠️ **Don't use the green `Code` → `Download ZIP` button**
-> That downloads the **source code** (~360 KB, **no exe**); it is only for developers who want to modify the code.
+> That downloads the **source code** (211 KB / 31 files, **no exe**, nothing happens when you double-click); it is only for developers who want to modify the code.
 > Regular users should use the **Download** link above, or grab `EmailManager.zip` (13 MB) from [Releases](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest).
 
 **为香港科技大学（HKUST）学生开发** —— 用 AI 把收件箱自动分成 S / A / B / C 四级，并按需生成一份总结报告发给自己。课程代号、学院、宿舍关键词等默认值都按 HKUST 预置，换成别的学校只需在配置里改几个字段。
