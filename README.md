@@ -298,8 +298,54 @@ The app sends **email content** (sender, subject, body excerpts) to the AI provi
 
 ---
 
-## 声明 / Credit
+## 声明与引用 / Credit & Citation
 
-**Designed by pkfok@hkust**
+**Designed by pkfok@hkust** ｜ 香港科技大学（HKUST）· Hong Kong University of Science and Technology
 
-香港科技大学（HKUST）· Hong Kong University of Science and Technology
+| 项 / Item | 内容 / Detail |
+|---|---|
+| 作者 / Author | **pkfok@hkust**（HKUST） |
+| 首次发布 / First published | **2026-10-10** —— 本仓库的**公开提交记录**（带时间戳）即为著作权证明<br>**2026-10-10** — the public, timestamped commit history of this repository is the record of authorship |
+| 许可 / License | [MIT](LICENSE) © 2026 MiKasss666 |
+
+### 使用条款 / Terms of use
+
+本项目以 **MIT 许可**发布，你可以自由使用、修改、分发。**但 MIT 许可有一项硬性要求：
+所有副本都必须保留版权声明与许可声明**（见 [LICENSE](LICENSE) 第一段）。
+
+也就是说 —— **把署名、LICENSE 或这段声明删掉再拿去用，本身就已经超出了授权范围。**
+
+This project is released under the **MIT license**: you are free to use, modify and redistribute it.
+**The MIT license requires that the copyright notice and this permission notice be included in all
+copies or substantial portions of the Software.**
+
+In other words: **stripping the credit, the LICENSE file or this notice and using the code anyway is
+already outside the terms of the licence.**
+
+### 学术用途 / Academic use
+
+这是作者的**个人作品**。如果你和作者选了同一门课：
+
+- 把它当作自己的作业、小组作业或个人项目提交，属于**学术不端**；
+- 本仓库是**公开**的，提交时间戳可在 GitHub 上随时查证，且可被任何人截图、存档；
+- 需要引用代码时，请按下面的格式注明来源。
+
+This is the author's **personal work**. If you happen to take the same course:
+
+- Submitting it as your own assignment, group project or personal project is **academic misconduct**;
+- This repository is **public** — its commit timestamps can be verified (and archived) by anyone at any time;
+- If you need to reference the code, please credit it as shown below.
+
+**引用格式 / How to cite**
+
+> 本项目使用了 Email Manager（作者 pkfok@hkust，HKUST），
+> 仓库地址：https://github.com/MiKasss666/hkust-ai-email-manager
+>
+> This project uses Email Manager by pkfok@hkust (HKUST),
+> available at https://github.com/MiKasss666/hkust-ai-email-manager
+
+仓库里还有一份机器可读的 [CITATION.cff](CITATION.cff) —— GitHub 会据此在侧边栏显示
+「**Cite this repository**」按钮，点一下就能复制标准引用格式。
+
+A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
+**"Cite this repository"** button in the sidebar.
