@@ -2,6 +2,22 @@
 
 **中文** ｜ English below each section
 
+> ## ⬇️ 只是想用？点这里下载
+> ## ⬇️ Just want to use it? Download here
+>
+> ### 👉 **[下载打包版 Download EmailManager.zip](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest)** 👈
+>
+> 解压 → 双击 `EmailManager.exe` → 完事。**不需要安装 Python。**
+> Unzip → double-click `EmailManager.exe`. **No Python required.**
+
+> ⚠️ **别点右上角绿色的 `Code` → `Download ZIP`**
+> 那个下载的是**源码**（约 360 KB，里面**没有 exe**），只有想改代码的开发者才需要。
+> 普通用户请用上面那个 **Download** 链接，或到 [Releases](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest) 页面下载 `EmailManager.zip`（13 MB）。
+>
+> ⚠️ **Don't use the green `Code` → `Download ZIP` button**
+> That downloads the **source code** (~360 KB, **no exe**); it is only for developers who want to modify the code.
+> Regular users should use the **Download** link above, or grab `EmailManager.zip` (13 MB) from [Releases](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest).
+
 **为香港科技大学（HKUST）学生开发** —— 用 AI 把收件箱自动分成 S / A / B / C 四级，并按需生成一份总结报告发给自己。课程代号、学院、宿舍关键词等默认值都按 HKUST 预置，换成别的学校只需在配置里改几个字段。
 
 **Built for students at HKUST (Hong Kong University of Science and Technology)** — an AI assistant that sorts your Outlook inbox into S / A / B / C and emails you a summary report on demand. Course codes, school and dorm keywords ship pre-filled for HKUST; other schools only need a few config changes.
