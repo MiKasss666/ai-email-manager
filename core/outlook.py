@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import time
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -49,9 +50,16 @@ SUM_COMMAND_RE = re.compile(r"^sum(?:\s+([sabc]+))?$", re.IGNORECASE)
 OL_WINDOW_MINIMIZED = 1           # OlWindowState.olMinimized
 OUTLOOK_MANUAL_HINT = ("Outlook is not running. Open Outlook classic first and wait until "
                        "your inbox shows up, then try again.")
+# 启动 Outlook 的退避：只约束「主动启动」，**绝不约束「附加到已在运行的实例」**
+# （早期版本把退避挡在 Dispatch 前面，导致用户手动开了 Outlook 也连不上）
+LAUNCH_BACKOFF_SECONDS = 300
+OUTLOOK_START_TIMEOUT = 30        # 启动 OUTLOOK.EXE 后等它出现的上限（秒）
 # 说明：这里**故意没有**"启动失败后的冷却"之类的守卫 —— 见 connect() 的文档字符串。
 # 重试节奏交给调用方（监听那边对"Outlook 暂时用不了"单独退避）。
 
+# 上次尝试启动 Outlook 的时刻 / 上次打印退避提示的时刻
+_last_launch_attempt = 0.0
+_backoff_logged_at = 0.0
 # "例行附加成功"这类心跳日志已经打过哪些 key（见 _notice）
 _seen_notices: set = set()
 
@@ -325,11 +333,111 @@ def connect(*, auto_launch: bool = True,
     if was_running:
         _notice(log, "attach", "[outlook] attaching to the running Outlook")
     else:
-        # 「要启动 Outlook」是状态变化，不走心跳抑制（但同一状态也不会反复刷）
-        _notice(log, "launch", "[outlook] Outlook is not running - trying to start it")
+        # 没看到 OUTLOOK.EXE 进程。可能是真没开，也可能是枚举受限 —— 所以下面
+        # **只对"要不要主动拉起"做退避，绝不阻止后面的 Dispatch 附加**。
+        if _launch_allowed():
+            _notice(log, "launch", "[outlook] Outlook is not running - starting it")
+            _launch_outlook(log)
+        else:
+            _notice_backoff(log)
 
+    app = _dispatch()
+
+    if was_running or _outlook_process_running():
+        _notice(log, "attached", "[outlook] attached")
+    else:
+        # 极少数情况：Dispatch 成功但进程还是看不到（枚举受限），照样能用，不最小化
+        _notice(log, "attached-blind", "[outlook] connected")
+    if not was_running:
+        _minimize_outlook(app)          # 只最小化我们自己拉起来的那个
+    return app, _mapi_namespace(app, log=log)
+
+
+def outlook_exe_path() -> Optional[str]:
+    """定位 OUTLOOK.EXE（先查注册表 App Paths，再退回常见安装路径）。
+
+    用途：主动拉起 Outlook 时**正常启动这个可执行文件**，而不是靠 COM 激活 —— 见
+    _launch_outlook() 里的说明。
+    """
+    if os.name != "nt":
+        return None
+    candidates: List[str] = []
     try:
-        app = win32com.client.Dispatch("Outlook.Application")
+        import winreg
+        for sub in (r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\outlook.exe",
+                    r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\outlook.exe"):
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, sub) as key:
+                    value = winreg.QueryValue(key, None)
+                    if value:
+                        candidates.append(value)
+            except OSError:
+                continue
+    except Exception:
+        pass
+    candidates += [r"C:\Program Files\Microsoft Office\Root\Office16\OUTLOOK.EXE",
+                   r"C:\Program Files (x86)\Microsoft Office\Root\Office16\OUTLOOK.EXE"]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
+def _launch_allowed() -> bool:
+    """现在允许再尝试「启动」Outlook 吗？（退避只约束启动，不约束附加）"""
+    return (time.time() - _last_launch_attempt) >= LAUNCH_BACKOFF_SECONDS
+
+
+def _notice_backoff(log: Callable[..., None]) -> None:
+    """退避期内不打日志刷屏，但每次进入退避窗口提示一次。"""
+    global _backoff_logged_at
+    if time.time() - _backoff_logged_at < LAUNCH_BACKOFF_SECONDS:
+        return
+    _backoff_logged_at = time.time()
+    log(f"[outlook] Outlook is not running and the last start attempt was less than "
+        f"{LAUNCH_BACKOFF_SECONDS}s ago - not starting it again yet "
+        f"(open Outlook yourself and this will reconnect by itself)")
+
+
+def _launch_outlook(log: Callable[..., None]) -> None:
+    """主动把 Outlook 拉起来。
+
+    **优先「正常启动 OUTLOOK.EXE」，而不是靠 COM 激活。** 这是实测踩出来的：
+    `Dispatch` 拉起来的往往是一个**自动化实例** —— 本轮任务结束、COM 引用释放后它就退出，
+    于是下一轮又发现"没在运行"→ 再拉一次，形成**每 30 秒拉起一次 Outlook 的死循环**
+    （实测一小时 100 次，每次都要重新加载一遍加载项，用户看到的是 Outlook 不断弹出，
+    同时白白吃掉内存和 CPU）。
+
+    直接启动 OUTLOOK.EXE 得到的是**完整的交互式 Outlook**，它会一直留着，下一轮直接附加即可。
+    """
+    global _last_launch_attempt
+    _last_launch_attempt = time.time()
+
+    exe = outlook_exe_path()
+    if not exe:
+        log("[outlook] could not locate OUTLOOK.EXE - falling back to COM activation")
+        return
+    try:
+        subprocess.Popen([exe], close_fds=True)
+    except Exception as ex:
+        log(f"[outlook] could not start OUTLOOK.EXE ({type(ex).__name__}: {ex}) - "
+            f"falling back to COM activation")
+        return
+
+    log(f"[outlook] started {exe} - waiting for it to come up")
+    deadline = time.time() + OUTLOOK_START_TIMEOUT
+    while time.time() < deadline:
+        if _outlook_process_running():
+            log("[outlook] OUTLOOK.EXE is up (it stays open now, no more repeated launches)")
+            return
+        time.sleep(1)
+    log(f"[outlook] OUTLOOK.EXE did not appear within {OUTLOOK_START_TIMEOUT}s")
+
+
+def _dispatch():
+    """Dispatch("Outlook.Application")；失败时抛 OutlookNotRunning（带完整性提示）。"""
+    try:
+        return win32com.client.Dispatch("Outlook.Application")
     except Exception as ex:
         level = integrity_level()
         hint = ""
@@ -340,13 +448,6 @@ def connect(*, auto_launch: bool = True,
                     "from a sandboxed shell or agent.")
         raise OutlookNotRunning(
             f"Could not connect to Outlook: {type(ex).__name__}: {ex}.{hint}") from ex
-
-    if was_running:
-        _notice(log, "attached", "[outlook] attached")
-    else:
-        log("[outlook] Outlook started in the background")
-        _minimize_outlook(app)
-    return app, _mapi_namespace(app, log=log)
 
 
 def newest_message(ns):

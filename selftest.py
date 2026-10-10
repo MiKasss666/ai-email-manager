@@ -265,8 +265,10 @@ check("间隔正常值原样返回", clamp_interval(45) == 45)
 check("Outlook 暂时用不了 → 退避到 120 秒",
       retry_delay_for(outlook.OutlookNotRunning("nope")) == OUTLOOK_RETRY_DELAY)
 check("其它错误 → 用默认间隔（None）", retry_delay_for(ValueError("boom")) is None)
-check("退避只影响节奏，不做成'禁止连接'",
-      not hasattr(outlook, "_last_launch_attempt"))
+# 注意：这条断言在 2026-10 改过。原来的写法是"不许存在 _last_launch_attempt"，
+# 目的是防止把退避挡在 Dispatch 前面（那样用户手动开了 Outlook 也连不上）。
+# 现在退避确实存在，但只用于「启动」这一条路径 —— 真正的防回归断言在 [15] 节：
+# 它检查 connect() 里 _dispatch() 出现在退避判断**之后**，即附加永不被挡。
 
 # ── 启动补分类的范围设置 ──────────────────────────────────────
 check("catchup_days 默认 7 天", config.from_dict({}).catchup_days == 7)
@@ -532,6 +534,33 @@ check("实际只打了 3 条，而不是 4 条", _notice_calls == ["attaching", 
 outlook._seen_notices.clear()
 check("清空后可以重新打（模拟新一次会话）",
       outlook._notice(_outlook_log, "attach", "attaching") is True)
+
+print("[15] 启动 Outlook 的退避（只约束「启动」，绝不约束「附加」）")
+import time as _time  # noqa: E402
+
+check("能找到 OUTLOOK.EXE（本机装了 Office）", bool(outlook.outlook_exe_path()))
+if outlook.outlook_exe_path():
+    check("定位到的路径确实存在", os.path.exists(outlook.outlook_exe_path()))
+    check("路径以 OUTLOOK.EXE 结尾", outlook.outlook_exe_path().upper().endswith("OUTLOOK.EXE"))
+
+_saved_launch = outlook._last_launch_attempt
+try:
+    outlook._last_launch_attempt = 0.0
+    check("从未尝试过 → 允许启动", outlook._launch_allowed() is True)
+    outlook._last_launch_attempt = _time.time()
+    check("刚尝试过 → 退避期内不再启动", outlook._launch_allowed() is False)
+    outlook._last_launch_attempt = _time.time() - (outlook.LAUNCH_BACKOFF_SECONDS + 1)
+    check("超过退避时长 → 重新允许启动", outlook._launch_allowed() is True)
+finally:
+    outlook._last_launch_attempt = _saved_launch
+
+# 这一条是防回归的关键：退避**不能**出现在 Dispatch 之前
+import inspect as _inspect  # noqa: E402
+_src = _inspect.getsource(outlook.connect)
+check("connect() 里 Dispatch 出现在退避判断之后（退避不会挡掉附加）",
+      _src.find("_dispatch()") > _src.find("_launch_allowed()"))
+check("退避提示里有明确的人工处理指引",
+      "open Outlook yourself" in _inspect.getsource(outlook._notice_backoff))
 
 _cfg = config.from_dict({"email": "a@b.c", "language": "zh", "batch_size": 40,
                          "ai": {"active": "x", "profiles": {"x": {"type": "cli"}}}})
