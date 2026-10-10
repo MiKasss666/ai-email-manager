@@ -64,16 +64,34 @@ Four sections: **Prerequisites → Configuration → Classification logic → Us
 
 ### AI 后端 / AI backends（必须有一个可用 / one must be usable）
 
-| 后端 / Backend | 类型 / Type | 地址 / 模型<br>Endpoint / Model | 需要 Key<br>API key |
-|---|---|---|---|
-| DeepSeek | OpenAI 兼容 / compatible | `https://api.deepseek.com` / `deepseek-flash` | 是 / yes |
-| OpenAI | OpenAI | `https://api.openai.com/v1` / `gpt-4o-mini` | 是 / yes |
-| Anthropic | Anthropic | `https://api.anthropic.com` / `claude-sonnet-4-5` | 是 / yes |
-| Claude CLI | 本地命令行 / local CLI | 本机装了 Claude Code CLI 即可<br>Any machine with Claude Code CLI installed | 否 / no |
-| Ollama | OpenAI 兼容 / compatible | `http://localhost:11434/v1` / `qwen2.5:7b` | 否（本地）/ no (local) |
+| 后端 / Backend | 类型 / Type | 地址 / 模型<br>Endpoint / Model | 需要 Key<br>API key | 实测状态<br>Tested |
+|---|---|---|---|---|
+| **DeepSeek** | OpenAI 兼容 / compatible | `https://api.deepseek.com` / `deepseek-flash` | 是 / yes | ✅ **已完整实测**<br>fully tested |
+| OpenAI | OpenAI | `https://api.openai.com/v1` / `gpt-4o-mini` | 是 / yes | ⚠️ **未实测**<br>not tested |
+| Anthropic | Anthropic | `https://api.anthropic.com` / `claude-sonnet-4-5` | 是 / yes | ⚠️ **未实测**<br>not tested |
+| Claude CLI | 本地命令行 / local CLI | 本机装了 Claude Code CLI 即可<br>Any machine with Claude Code CLI installed | 否 / no | ⚠️ **未实测**<br>not tested |
+| Ollama | OpenAI 兼容 / compatible | `http://localhost:11434/v1` / `qwen2.5:7b` | 否（本地）/ no (local) | ⚠️ **未实测**<br>not tested |
 
 模型名会随服务商更新，以官方文档为准。
 Model names change over time — always check your provider's docs.
+
+### ⚠️ 目前的限制 / Known limitations
+
+- **只用 DeepSeek 做过完整实测。** 分类、总结、真实邮箱读写都跑通过（DeepSeek 官方 API + `deepseek-flash`）。
+  其余四个后端**只做过代码层面的单元测试**（URL 拼接、请求构造、响应解析、错误码翻译），**没有对真实服务发起过调用**，所以它们能不能用、判得准不准，目前**未知**。
+  想试的话先跑一次自检：`py -3 run.py check --ai`（会发一个极小请求，确认后端真的可用）。
+
+  **Only the DeepSeek backend has been fully tested.** Classification, summarisation and real mailbox read/write were all verified against the official DeepSeek API with `deepseek-flash`.
+  The other four backends are covered by **unit tests only** (URL building, request shape, response parsing, error translation) — **no real API call has ever been made to them**, so whether they work and how well they classify is currently **unknown**.
+  To try one: `py -3 run.py check --ai` (sends one tiny request to confirm the backend answers).
+
+- **分类提示词目前固定为中文。** 送给模型的规则文本是中文的（界面和文档都是英文，只有这段提示词不是）。中英文邮件都实测能正常判级，但纯英文环境下是否最优**尚未验证**。
+
+  **The classification prompt is currently Chinese-only.** The rules sent to the model are written in Chinese (the GUI and docs are English; this one piece is not). Classification was verified on mixed Chinese/English mail, but whether it is optimal for an all-English mailbox is **not yet verified**.
+
+- **仅支持 Windows + Outlook 经典版。** 网页版 Outlook、新版 Outlook、macOS、Linux 都不支持（程序通过 COM 接口操作 Outlook）。
+
+  **Windows + Outlook Classic only.** Outlook on the web, the new Outlook, macOS and Linux are all unsupported (the app drives Outlook through the COM interface).
 
 ---
 
