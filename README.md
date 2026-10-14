@@ -275,15 +275,7 @@ copies or substantial portions of the Software.**
 In other words: **stripping the credit, the LICENSE file or this notice and using the code anyway is
 already outside the terms of the licence.**
 
-### Academic use
-
-This is the author's **personal work**. If you happen to take the same course:
-
-- Submitting it as your own assignment, group project or personal project is **academic misconduct**;
-- This repository is **public** — its commit timestamps can be verified (and archived) by anyone at any time;
-- If you need to reference the code, please credit it as shown below.
-
-**How to cite**
+### How to cite
 
 > This project uses Email Manager by pkfok@hkust (HKUST),
 > available at https://github.com/MiKasss666/hkust-ai-email-manager
@@ -563,15 +555,7 @@ py -3 run.py summarize [letters]  # 生成并发送总结报告；letters 如 s 
 
 也就是说 —— **把署名、LICENSE 或这段声明删掉再拿去用，本身就已经超出了授权范围。**
 
-### 学术用途
-
-这是作者的**个人作品**。如果你和作者选了同一门课：
-
-- 把它当作自己的作业、小组作业或个人项目提交，属于**学术不端**；
-- 本仓库是**公开**的，提交时间戳可在 GitHub 上随时查证，且可被任何人截图、存档；
-- 需要引用代码时，请按下面的格式注明来源。
-
-**引用格式**
+### 引用格式
 
 > 本项目使用了 Email Manager（作者 pkfok@hkust，HKUST），
 > 仓库地址：https://github.com/MiKasss666/hkust-ai-email-manager
