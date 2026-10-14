@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "如果你在课程作业、小组项目或论文里使用了本项目，请按下面的信息注明来源。 / If you use this software in coursework, a group project or a paper, please cite it as below."
+message: "If you use this software in coursework, a group project or a paper, please cite it as below. / 如果你在课程作业、小组项目或论文里使用了本项目，请按下面的信息注明来源。"
 title: "Email Manager — AI 邮件管理助手（Outlook 经典版）"
 abstract: "面向香港科技大学（HKUST）学生的 Outlook 经典版收件箱自动分级（S/A/B/C）与总结工具。 / An AI email assistant that sorts an Outlook Classic inbox into S/A/B/C and emails a summary report, built for HKUST students."
 authors:
