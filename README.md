@@ -119,7 +119,8 @@ Model names change over time — always check your provider's docs.
 | `email` | 你的邮箱。**必填**——空着程序会拒绝执行任务。<br>Your address. **Required** — tasks are refused while it is empty. | 空 / empty |
 | `name` | 姓名。邮件里称呼你 → 判 A 级。<br>Your name. Mail addressing you by name → level A. | 空 / empty |
 | `student_id` | 学号。正文里出现学号 → 判 A 级。<br>Student ID. Appearing in the body → level A. | 空 / empty |
-| `school` | 学校名。发件人/正文命中 → 判 A 级。<br>School name. Matching sender/body → level A. | `香港科技大学 (HKUST)` |
+| `school` | 学校名。**仅用于显示/署名**；判"是不是学校邮件"改用下面的 `school_domains`。<br>School name. **Display only**; the school-mail test uses `school_domains` below. | `香港科技大学 (HKUST)` |
+| `school_domains` | **「是学校邮件」的确定性判据**：发件人域名命中这里（逗号分隔）→ 直接认定为学校邮件，不再问 AI。没命中**不代表不是**——学校事务常由外部平台代发，那一类由 AI 按内容判断。<br>**Deterministic school-mail test**: a sender domain matching one of these is school mail without asking the AI. Not matching does **not** mean it isn't — school business is often relayed by external platforms, and the AI judges those from the content. | `ust.hk` |
 | `faculty` | 学院 / 系名，可逗号分隔多个。命中 → 判 A 级。<br>Faculty / department, comma-separated. Match → level A. | 空 / empty |
 | `courses` | 本学期课程代号，逗号分隔。**命中 → 直接判 S 级**（确定性规则，覆盖 AI）。<br>This term's course codes, comma-separated. **Match → level S directly** (deterministic, overrides the AI). | 空 / empty |
 | `faculty_keywords` | 额外的学院关键词。<br>Extra faculty keywords. | 空 / empty |
@@ -166,31 +167,59 @@ Leave `api_key` empty to use the env var, so the key never lands in a file.
 | 级别 / Level | 含义 / Meaning | 颜色 / Colour |
 |---|---|---|
 | **S** | 必须马上处理：作业 / 考试 / 要交的材料 / 你选的课程<br>Act now: homework, exams, documents to submit, your enrolled courses | 橙色 / orange |
-| **A** | 重要，且来源可信：学校、学院、宿舍、老师、其它课程<br>Important and from a trusted source: school, faculty, dorm, teachers, other courses | 紫色 / purple |
+| **A** | 重要，且来源可信：学院、宿舍、老师、其它课程<br>Important and from a trusted source: faculty, dorm, teachers, other courses | 紫色 / purple |
 | **B** | 值得一看：个人成长、讲座、实习、学习资源<br>Worth a look: personal growth, talks, internships, study resources | 蓝色 / blue |
 | **C** | 其余：活动通知、推广、兜底<br>Everything else: event notices, promotions, fallback | 灰色 / grey |
 | **Sum** | 程序自己的总结报告与 `sum` 指令邮件<br>The app's own summary reports and `sum` command mail | 黄色 / yellow |
 
+写回分类时**只替换本程序自己的标签**（`S`/`A`/`B`/`C`/`Sum`）：你自己定义的分类、以及服务器规则打上的分类会**原样保留**，重判也只换级别、不会层层叠加。程序从不删除你 Outlook 里的分类主列表条目。
+When writing a category back, **only the app's own labels are replaced** (`S`/`A`/`B`/`C`/`Sum`):
+categories you defined yourself, or those applied by server rules, are **left untouched**; re-judging
+replaces the level instead of stacking. The app never deletes entries from your Outlook category list.
+
 ### 判定顺序 / Decision order（前一步命中即停止 / first match wins）
 
 ```
+step-1 先问 AI：这封是不是学校邮件？发件人域名命中 school_domains 的由代码直接认定
+       └─ 不是学校邮件 → 完全不贴标签（Outlook 里保持原样）
 step0  邮件命中你填的 courses（课程代号）        → S   ★ 确定性规则，直接覆盖 AI 判断
-step1  来源可信（faculty / school / 宿舍 / 别的课程代号 / 你的姓名 / 学号） → A
+step1  来源可信（faculty / 宿舍 / 别的课程代号 / 你的姓名 / 学号） → A
 step2  step1 命中，且正文里的 deadline 在 urgent_days 天内 → A 升 S
 step3  属于个人成长 / 学习相关                  → B
 step4  其余                                      → C
 
+step-1 AI decides whether the mail is school mail; a sender domain in `school_domains` is
+       decided by code without asking. Not school mail → no label at all.
 step0  sender/subject/body matches one of your `courses` → S   ★ deterministic rule, overrides the AI
-step1  trusted source (faculty / school / dorm / other course code / your name / student ID) → A
+step1  trusted source (faculty / dorm / other course code / your name / student ID) → A
 step2  step1 matched and a deadline in the body is within `urgent_days` → A upgraded to S
 step3  personal growth / study related → B
 step4  everything else → C
 ```
 
-- **只有 step0 是确定性规则**：本地正则匹配，不经过 AI，也就不会判错。
-  **Only step0 is deterministic**: local regex matching, no AI involved, so it cannot be misjudged.
-- **step1–step4 由 AI 完成**：程序把这套规则写进提示词，由模型逐封判断。
-  **step1–step4 are done by the AI**: the rules go into the prompt and the model judges each mail.
+- **step-1 为什么要问 AI**：只看发件人域名会漏——学校事务经常由**外部平台代发**
+  （Canvas 通知、问卷、报名系统…），域名不是学校的，内容却是学校事务。所以"是不是学校邮件"
+  也交给 AI 按内容判断；只有域名命中的那一类由代码直接认定（确定性证据优先于 AI）。
+  **Why step-1 asks the AI**: a domain-only rule misses school business that is **sent on behalf of
+  the school by external platforms** (Canvas notifications, surveys, sign-up systems…) — the domain is
+  not the school's, but the content is. So the AI judges it from the content; only domain matches are
+  decided by code (deterministic evidence outranks the AI).
+- **不是学校邮件的邮件一个字节都不写**：不贴 S/A/B/C、不动分类、不动红旗，也不算失败（不会触发重试）。
+  这些邮件会被记进 `watch_state.json`，之后不再重复送 AI。
+  **Non-school mail is never written to**: no label, no flag, and not counted as a failure (so no retry
+  loop). Such mails are remembered in `watch_state.json` and are not sent to the AI again.
+- **只有 step0 和"域名命中"是确定性规则**：本地判断，不经过 AI，也就不会判错。
+  **Only step0 and the domain match are deterministic**: local checks, no AI involved.
+- **step-1 / step1–step4 由 AI 完成**：程序把这套规则写进提示词，由模型逐封判断。
+  **step-1 and step1–step4 are done by the AI**: the rules go into the prompt and the model judges each mail.
+- 送给 AI 的每封邮件只包含：**发件人、主题、正文前 400 字符**。⚠️ 因为 step-1 要看内容，
+  **收件箱里的邮件（只要还没被判定过）都会送进 AI**——介意隐私的话请把 AI 后端换成
+  `ollama` 等本地模型，或在 `config.json` 里不要配云端 Key。
+  Each mail sent to the AI contains only: **sender, subject, first 400 characters of the body**.
+  ⚠️ Because step-1 reads the content, **every not-yet-judged inbox mail is sent to the AI** — if that
+  matters to you, point the AI backend at a local model such as `ollama`.
+- 一次送 `batch_size` 封；模型返回的条数与请求**不一致时整批作废**——宁可漏判，也不允许错位贴错标签。
+  `batch_size` mails go per request; if the model returns a different number of items the **whole batch is discarded** — better to miss than to mislabel.
 - 送给 AI 的每封邮件只包含：**发件人、主题、正文前 400 字符**。
   Each mail sent to the AI contains only: **sender, subject, first 400 characters of the body**.
 - 一次送 `batch_size` 封；模型返回的条数与请求**不一致时整批作废**——宁可漏判，也不允许错位贴错标签。
@@ -239,13 +268,17 @@ The model is asked for a JSON array of *exactly* N items; when the response is c
 | **Sum** | 手动生成并发送总结报告<br>Generate and send the summary report now |
 | `Scope: last N days` | 上面两个按钮的作用范围<br>How far back the two buttons above look |
 | `Dry run (print only, no write-back)` | **只打印不写回**。第一次用强烈建议勾上<br>**Print only, no write-back.** Strongly recommended on your first run |
-| `Include already classified` | 连已打过标签的也重新判一遍。**会覆盖你手动改过的分类**，且 AI 调用量成倍增加<br>Re-judge already-labelled mail. **Overwrites manual edits** and multiplies AI usage |
+| `Include already classified` | 连已打过标签的也重新判一遍。级别会被重判，**但你自己定义的分类标签会保留**；AI 调用量成倍增加<br>Re-judge already-labelled mail. The level is re-judged, but **your own category labels are preserved**; AI usage multiplies |
 | `Auto-watch new mail` | 自动监听开关（配置不齐时勾选会被拒绝并回弹）<br>Auto-watch toggle (refused and reverted while the config is incomplete) |
 | `poll every [N] seconds` | 轮询间隔（5–3600）<br>Poll interval (5–3600) |
 | **Activity log** | 运行日志。右上角 `Copy` 一键复制全文，`Clear` 清屏<br>Runtime log. `Copy` grabs the whole thing, `Clear` wipes it |
-| `Force reset` | 任务卡死时解锁界面（**不会杀死卡住的线程**，只解除界面封锁）<br>Unlocks the UI when a task hangs (**does not kill the stuck thread**) |
+| `Force reset` | 任务卡死时解锁界面。**不会杀死卡住的线程**，但会让它在下一个安全点停下来（不再继续写邮箱），它在后台的结果也会被丢弃<br>Unlocks the UI when a task hangs. **Does not kill the stuck thread**, but makes it stop at the next safe point (it stops writing to the mailbox), and its late result is discarded |
 
 日志同时写入 `app.log`（与 `config.json` 同目录），每行带 `HH:MM:SS` 时间戳。同一种连接心跳只记一次，所以日志里保留下来的基本都是**真正发生的事**。
+
+程序是**单实例**的：第二次启动会提示"已经在运行"并直接退出。两个实例会各自开一份监听、同时给同一个邮箱写分类（标签互相覆盖），所以必须挡住。
+The app is **single-instance**: a second launch tells you it is already running and exits. Two copies
+would each run their own watcher and write categories to the same mailbox at the same time.
 
 The log is also written to `app.log` (next to `config.json`) with `HH:MM:SS` timestamps. Repeated connection heartbeats are logged once, so what remains is mostly **things that actually happened**.
 

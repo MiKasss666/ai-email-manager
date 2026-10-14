@@ -47,6 +47,13 @@ DEFAULT_DORM_KEYWORDS = [
     "Student Housing", "Residence", "Dorm",
 ]
 
+# 「学校邮件」的确定性判据：发件人邮箱的域名后缀。
+# 命中其一 → **直接认定为学校邮件**，不再问 AI（确定性优先）；
+# 没命中不代表不是 —— 学校事务经常由外部平台代发（Canvas、问卷、报名系统），
+# 那些由 AI 按内容判断，见 classifier.build_spec 的第一步。
+# 港科大学生邮箱是 @connect.ust.hk、教职员是 @ust.hk，一个 ust.hk 就全覆盖了。
+DEFAULT_SCHOOL_DOMAINS = ["ust.hk"]
+
 
 def app_dir() -> str:
     """应用根目录：打包后取 exe 所在目录，否则取 core 的上一级目录。"""
@@ -287,6 +294,8 @@ class Config:
     dorm_keywords: List[str] = field(default_factory=lambda: list(DEFAULT_DORM_KEYWORDS))
     course_code_regex: str = DEFAULT_COURSE_CODE_RE
     faculty_keywords: List[str] = field(default_factory=list)
+    # 分级的前置门槛：只有发件人域名命中这里的邮件才会被分级
+    school_domains: List[str] = field(default_factory=lambda: list(DEFAULT_SCHOOL_DOMAINS))
 
     # AI 后端
     ai_active: str = DEFAULT_AI_ACTIVE
@@ -306,6 +315,25 @@ class Config:
     def faculty_terms(self) -> List[str]:
         """「来源 = 学院」的判定词：faculty 本身 + 额外关键词。"""
         return ([self.faculty] if self.faculty else []) + list(self.faculty_keywords)
+
+    def is_school_address(self, address: str) -> bool:
+        """发件人地址是否属于学校 —— 命中即**确定性认定为学校邮件**。
+
+        只认域名后缀，不认显示名：`ust.hk` 同时覆盖学生的 @connect.ust.hk
+        与教职员的 @ust.hk。拿不到可用地址时返回 False（这个结论只用来「捞回」
+        AI 误判的学校邮件，所以判 False 是安全的：还有 AI 那一层）。
+        """
+        text = str(address or "").strip().lower()
+        if "@" not in text:
+            return False
+        domain = text.rsplit("@", 1)[1].strip().strip(">").strip().rstrip(".")
+        if not domain:
+            return False
+        for suffix in self.school_domains:
+            s = str(suffix).strip().lower().lstrip("@").strip().strip(".")
+            if s and (domain == s or domain.endswith("." + s)):
+                return True
+        return False
 
     @property
     def ai(self) -> AiProfile:
@@ -357,6 +385,8 @@ def from_dict(raw: dict) -> Config:
     # 这两个字段要区分「键不存在」（补学校默认值）和「显式留空」（尊重用户的清空操作）
     dorm = _as_list(raw.get("dorm_keywords")) if "dorm_keywords" in raw else list(DEFAULT_DORM_KEYWORDS)
     school = _as_str(raw.get("school")) if "school" in raw else DEFAULT_SCHOOL
+    # school_domains 为空会让「所有邮件都不分级」—— 那是个静默的灾难，所以空就回落默认值
+    domains = _as_list(raw.get("school_domains")) or list(DEFAULT_SCHOOL_DOMAINS)
 
     ai_raw = raw.get("ai") if isinstance(raw.get("ai"), dict) else {}
     profiles_raw = ai_raw.get("profiles") if isinstance(ai_raw.get("profiles"), dict) else None
@@ -383,6 +413,7 @@ def from_dict(raw: dict) -> Config:
         dorm_keywords=dorm,
         course_code_regex=_as_str(raw.get("course_code_regex"), DEFAULT_COURSE_CODE_RE),
         faculty_keywords=_as_list(raw.get("faculty_keywords")),
+        school_domains=domains,
         ai_active=_as_str(ai_raw.get("active"), DEFAULT_AI_ACTIVE),
         ai_profiles=profiles,
     )
@@ -405,6 +436,7 @@ def to_dict(cfg: Config) -> dict:
         "dorm_keywords": list(cfg.dorm_keywords),
         "course_code_regex": cfg.course_code_regex,
         "faculty_keywords": list(cfg.faculty_keywords),
+        "school_domains": list(cfg.school_domains),
         "ai": {
             "active": cfg.ai_active,
             "profiles": {name: ai_profile_to_dict(profile)
@@ -428,9 +460,14 @@ def load(path: Optional[str] = None) -> Config:
 
 
 def save(cfg: Config, path: Optional[str] = None) -> str:
-    """原子写入（先写 .tmp 再替换），避免中途失败留下半个文件。"""
+    """原子写入（先写 .tmp 再替换），避免中途失败留下半个文件。
+
+    临时文件名带 pid：万一真有两个实例（互斥体挡不住的情况，比如一个是旧版本），
+    也不会交错写同一个 .tmp 再 os.replace —— 那会把 config.json 写坏，
+    而不只是丢一次更新。
+    """
     path = path or config_path()
-    tmp = path + ".tmp"
+    tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(to_dict(cfg), f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)

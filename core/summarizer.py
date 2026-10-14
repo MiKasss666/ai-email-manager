@@ -63,15 +63,16 @@ def build_points_prompt(emails: Sequence[Dict[str, Any]], cfg: Config) -> str:
                 f"- Never mention the level (S/A/B/C) or the sender.\n"
                 f"- No filler like \"this email\"; get straight to the point.\n"
                 f"- One line per email, at most about 40 words.\n"
-                f"Output only a JSON array of strings, one per email in the same order, "
-                f"exactly {count} items.\n\n{listing}\n")
+                f"Output ONE JSON object: {{\"points\": [ ... ]}} — one short string per email, "
+                f"same order as the emails, exactly {count} items.\n\n{listing}\n")
     return (f"给下面每封邮件写一句中文要点（一句话说清：这封邮件是什么、要我做什么）。\n"
             f"要求：\n"
             f"- 邮件里若有明确的截止时间/日期、课程代号、金额、地点、需要提交的材料，写进要点；\n"
             f"- 不要写级别（S/A/B/C）和发件人；\n"
             f"- 不要写「这封邮件」「通知你」这类废话，直接说重点；\n"
             f"- 每封只写一句，控制在 40 字左右。\n"
-            f"只输出 JSON 数组，元素按邮件顺序，每个是一个字符串（要点），数量必须正好 {count} 个。\n\n"
+            f"只输出一个 JSON 对象：{{\"points\": [...]}}，按邮件顺序每封一个字符串（要点），"
+            f"数量必须正好 {count} 个。\n\n"
             f"{listing}\n")
 
 

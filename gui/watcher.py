@@ -38,6 +38,7 @@ CATCHUP_DAYS = 7           # 最多往回补多少天（兜住「上次记住的
 MAX_FAILED_ROUNDS = 3      # 同一批连续失败几轮后放弃推进，避免无限重试烧额度
 OUTLOOK_RETRY_DELAY = 120  # Outlook 暂时用不了时的退避，别每 30 秒去撞一次
 REPORT_TAG_DAYS = 30       # 往前找多少天内的"漏了 Sum 标签"的总结报告
+IGNORED_LIMIT = 1000       # 记住多少封「判定为非学校邮件」的邮件，别每次启动重复送 AI
 
 
 # ── 状态文件 ──────────────────────────────────────────────────────
@@ -152,6 +153,10 @@ class WatchController:
         state = load_state()
         self._last_seen: Optional[str] = state.get("last_entryid")
         self._interval = clamp_interval(state.get("interval", DEFAULT_INTERVAL))
+        # 已被判定为「不是学校邮件」的邮件：记下来，之后不再重复送 AI
+        # （它们不会被打标签，所以 read_inbox(skip_classified=True) 认不出来，只能靠这份名单）
+        self._ignored: List[str] = [e for e in (state.get("ignored") or [])
+                                    if isinstance(e, str)][:IGNORED_LIMIT]
         self._running = False
         self._after_id: Optional[str] = None
         self._errors = 0
@@ -231,7 +236,38 @@ class WatchController:
             self._after_id = None
 
     def _persist(self) -> None:
-        save_state({"last_entryid": self._last_seen, "interval": self._interval})
+        save_state({"last_entryid": self._last_seen, "interval": self._interval,
+                    "ignored": self._ignored})
+
+    # ── 「不是学校邮件」名单 ──────────────────────────────────
+    def _candidate_filter(self):
+        """采集层过滤器：跳过已判定为非学校邮件的 EntryID，别重复送 AI。
+
+        这些邮件不会被打标签，所以 read_inbox(skip_classified=True) 认不出它们 ——
+        不记名单的话，每次启动的补分类都会把同一批垃圾再问一遍 AI。
+        名单为空时返回 None，让采集层完全跳过这层判断。
+        """
+        ignored = set(self._ignored)
+        if not ignored:
+            return None
+
+        def keep(msg) -> bool:
+            try:
+                entry_id = msg.EntryID
+            except Exception:
+                return True          # 拿不到 ID 就照常处理，别静默漏掉邮件
+            return entry_id not in ignored
+
+        return keep
+
+    def _remember_ignored(self, entry_ids) -> None:
+        """把这一轮判定为非学校邮件的 EntryID 记下来（新的放前面，超出上限截断）。"""
+        known = set(self._ignored)
+        fresh = [str(i) for i in entry_ids if i and str(i) not in known]
+        if not fresh:
+            return
+        self._ignored = (fresh + self._ignored)[:IGNORED_LIMIT]
+        self._persist()
 
     # ── 主线程：发起一轮检查 ──────────────────────────────────
     def _tick(self) -> None:
@@ -309,7 +345,9 @@ class WatchController:
             self._log(f"[watch] {change}")
 
         pending = outlook.collect_new_mail(ns, previous, days=CATCHUP_DAYS,
-                                           max_items=MAX_MAIL_PER_ROUND)
+                                           max_items=MAX_MAIL_PER_ROUND,
+                                           keep=self._candidate_filter(),
+                                           log=self._log)
         # 埋在这批新邮件下面的 sum 指令：顺手办掉，别让它们被基线推过去丢掉
         commands = self._run_commands(ns, cfg)
         if not pending:
@@ -317,10 +355,19 @@ class WatchController:
             return {"action": "idle", "commands": len(commands)}
 
         self._log(f"[watch] {len(pending)} new mail(s) to classify")
-        verdicts = classifier.classify(pending, cfg, log=self._log)
-        ok, failed = classifier.apply_verdicts(pending, verdicts, log=self._log)
-        stats = {"read": len(pending), "ok": ok, "failed": failed}
+        # 被 Force reset 放弃的这一轮要在安全点自己停下来，别再往邮箱里写
+        should_stop = self._runner.should_stop
+        verdicts = classifier.classify(pending, cfg, log=self._log, should_stop=should_stop)
+        ok, failed, skipped = classifier.apply_verdicts(pending, verdicts, log=self._log,
+                                                        should_stop=should_stop)
+        self._remember_ignored(classifier.not_school_entryids(pending, verdicts))
+        stats = {"read": len(pending), "ok": ok, "failed": failed, "skipped": skipped}
         stats.update(classifier.counts(verdicts))
+
+        if should_stop():
+            # 一轮没处理完：基线**不推进**，让剩下的下一轮重来
+            self._log("[watch] cancelled mid-round — baseline left where it was")
+            return {"action": action, "stats": stats, "cancelled": True}
 
         baseline, self._failed_rounds, gave_up = advance_policy(
             pending, failed, self._failed_rounds, next_seen)
@@ -402,16 +449,21 @@ class WatchController:
             self._log(f"[watch] {change}")
 
         pending = outlook.read_inbox(ns, days=cfg.catchup_days,
-                                     skip_classified=True, limit=MAX_MAIL_PER_ROUND)
+                                     skip_classified=True, limit=MAX_MAIL_PER_ROUND,
+                                     keep=self._candidate_filter(), log=self._log)
         if not pending:
             self._catchup_pending = False
-            return {"action": "catchup", "stats": {"read": 0, "ok": 0, "failed": 0}, "more": False}
+            return {"action": "catchup",
+                    "stats": {"read": 0, "ok": 0, "failed": 0, "skipped": 0}, "more": False}
 
         self._log(f"[watch] catch-up: {len(pending)} unclassified mail(s) in the last "
                   f"{cfg.catchup_days} day(s)")
-        verdicts = classifier.classify(pending, cfg, log=self._log)
-        ok, failed = classifier.apply_verdicts(pending, verdicts, log=self._log)
-        stats = {"read": len(pending), "ok": ok, "failed": failed}
+        verdicts = classifier.classify(pending, cfg, log=self._log,
+                                       should_stop=self._runner.should_stop)
+        ok, failed, skipped = classifier.apply_verdicts(pending, verdicts, log=self._log,
+                                                        should_stop=self._runner.should_stop)
+        self._remember_ignored(classifier.not_school_entryids(pending, verdicts))
+        stats = {"read": len(pending), "ok": ok, "failed": failed, "skipped": skipped}
         stats.update(classifier.counts(verdicts))
 
         # 凑满一批说明范围内可能还有，下一轮接着来；没满就是清完了
@@ -438,43 +490,64 @@ class WatchController:
         self._outlook_warned = False      # 下次断了再提示一次
         action = result.get("action")
 
-        if action == "baseline":
-            self._log("[watch] baseline recorded — existing mail is left untouched")
-        elif action == "classify":
-            stats = result["stats"]
-            if result.get("retry"):
-                self._log(f"[watch] {stats['failed']} mail(s) still unlabelled, will retry shortly")
-            else:
-                self._log(f"[watch] classified {stats['ok']} mail(s): "
-                          f"S={stats['S']} A={stats['A']} B={stats['B']} C={stats['C']}")
-        elif action == "catchup":
-            stats = result["stats"]
-            if not stats["read"]:
-                self._log("[watch] catch-up done: no unclassified mail left in scope")
-            else:
-                self._log(f"[watch] catch-up classified {stats['ok']} mail(s): "
-                          f"S={stats['S']} A={stats['A']} B={stats['B']} C={stats['C']}")
-                if result.get("more"):
-                    self._log("[watch] catch-up: more unclassified mail in range, continuing")
-        elif action == "summarize":
-            self._log(f"[watch] summary sent ({result.get('count', 0)} mail(s))")
-            if result.get("extra"):
-                self._log(f"[watch] {result['extra']} more sum command(s) handled in the same pass")
-        elif action == "skip-control":
-            pass                          # 已处理过的控制邮件：只推进基线，不重复出报告
-        elif action == "idle" and result.get("commands"):
-            self._log(f"[watch] handled {result['commands']} sum command(s) found in this batch")
-        elif action == "tag-report":
-            self._log("[watch] tagged our own report email with Sum")
+        try:
+            if action == "baseline":
+                self._log("[watch] baseline recorded — existing mail is left untouched")
+            elif action == "classify":
+                stats = result["stats"]
+                if result.get("retry"):
+                    self._log(f"[watch] {stats['failed']} mail(s) still unlabelled, "
+                              f"will retry shortly")
+                elif result.get("cancelled"):
+                    self._log("[watch] round cancelled — the rest stays for the next round")
+                else:
+                    self._log(f"[watch] classified {stats['ok']} mail(s): "
+                              f"S={stats['S']} A={stats['A']} B={stats['B']} C={stats['C']}")
+                    if stats.get("skipped"):
+                        self._log(f"[watch] {stats['skipped']} mail(s) judged not to be from "
+                                  f"the school — left untouched")
+            elif action == "catchup":
+                stats = result["stats"]
+                if not stats["read"]:
+                    self._log("[watch] catch-up done: no unclassified mail left in scope")
+                else:
+                    self._log(f"[watch] catch-up classified {stats['ok']} mail(s): "
+                              f"S={stats['S']} A={stats['A']} B={stats['B']} C={stats['C']}")
+                    if stats.get("skipped"):
+                        self._log(f"[watch] catch-up: {stats['skipped']} mail(s) judged not to be "
+                                  f"from the school — left untouched")
+                    if result.get("more"):
+                        self._log("[watch] catch-up: more unclassified mail in range, continuing")
+            elif action == "summarize":
+                self._log(f"[watch] summary sent ({result.get('count', 0)} mail(s))")
+                if result.get("extra"):
+                    self._log(f"[watch] {result['extra']} more sum command(s) handled "
+                              f"in the same pass")
+            elif action == "skip-control":
+                pass                      # 已处理过的控制邮件：只推进基线，不重复出报告
+            elif action == "idle" and result.get("commands"):
+                self._log(f"[watch] handled {result['commands']} sum command(s) found in "
+                          f"this batch")
+            elif action == "tag-report":
+                self._log("[watch] tagged our own report email with Sum")
+        finally:
+            # 这一段必须在 finally 里：回调中途抛异常时若跳过 _schedule()，
+            # 自动监听会**静默死掉**，日志里一点痕迹都没有（而日志是唯一的排查渠道）。
+            self._safe_notify("busy", False)
+            # 刚处理过邮件就紧接着再确认一轮（可能还有别的没分类）；否则等下一个间隔
+            soon = action in ("classify", "summarize") or (
+                action == "catchup" and result.get("more"))
+            self._schedule(BUSY_RETRY_DELAY if soon else None)
 
-        self._notify("busy", False)
-        # 刚处理过邮件就紧接着再确认一轮（可能还有别的没分类）；否则等下一个间隔
-        soon = action in ("classify", "summarize") or (
-            action == "catchup" and result.get("more"))
-        self._schedule(BUSY_RETRY_DELAY if soon else None)
+    def _safe_notify(self, kind: str, payload: Any) -> None:
+        """界面通知失败不能拖垮任务调度 —— 监听链必须活着。"""
+        try:
+            self._notify(kind, payload)
+        except Exception as ex:
+            self._log(f"[watch] ui notify failed: {type(ex).__name__}: {ex}")
 
     def _on_error(self, ex: BaseException) -> None:
-        self._notify("busy", False)
+        self._safe_notify("busy", False)
 
         # Outlook 用不了（没开、正在启动、或启动失败）：不算失败、不累计、不暂停。
         # 只提示一次，然后继续轮询 —— connect() 每轮都会再试，通了就自动接上。

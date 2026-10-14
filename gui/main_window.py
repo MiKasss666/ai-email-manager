@@ -45,6 +45,9 @@ class MainWindow:
 
         self._build()
 
+        # 回调自己抛异常时写进日志区（打包成 --windowed 后 print 是空操作，等于静默）
+        self.runner.on_callback_error = self.log.write
+
         # 监听控制器要用到日志区，所以放在 _build 之后创建
         self.watcher = watch_mod.WatchController(
             root, self.runner, lambda: self.cfg, self.log.write, self._on_watch_notify)
@@ -372,7 +375,8 @@ class MainWindow:
                        + (", including already classified" if force else "") + ") ===")
         started = self.runner.run(
             lambda: classifier.classify_inbox(cfg, days=days, dry_run=dry_run,
-                                              force=force, log=self.log.write),
+                                              force=force, log=self.log.write,
+                                              should_stop=self.runner.should_stop),
             on_done=self._on_categorize_done,
             on_error=self._on_task_error,
         )
@@ -382,7 +386,9 @@ class MainWindow:
     def _on_categorize_done(self, stats: Any) -> None:
         self._refresh_busy()
         self.log.write(f"Done: read {stats['read']}, S={stats['S']} A={stats['A']} "
-                       f"B={stats['B']} C={stats['C']}, ok {stats['ok']}, failed {stats['failed']}")
+                       f"B={stats['B']} C={stats['C']}, ok {stats['ok']}, "
+                       f"failed {stats['failed']}, skipped {stats.get('skipped', 0)} "
+                       f"(judged not to be school mail)")
 
     def _run_sum(self) -> None:
         if self.runner.busy or self._blocked_by_config():

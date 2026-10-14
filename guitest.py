@@ -228,7 +228,26 @@ def main() -> int:
     check("监听轮询链被接回（否则会静默死掉）", app.watcher._after_id is not None)
     app.watcher.stop()
     hang.set()                                   # 放掉卡住的线程
-    pump(root, 0.6)                              # 先让它的结果回到主线程，免得干扰下一节
+    pump(root, 0.6)                              # 它的结果会被代次检查丢掉（见下）
+
+    # 被放弃的任务的结果必须被丢弃：既不能打到新任务的回调上，也不能搅乱界面状态。
+    # 旧实现在这里会把僵尸的结果交给当前任务的 on_done，并把 busy 清零 ——
+    # 于是用户能再点出第三个任务，三个线程同时给同一个邮箱写分类。
+    print("[3b-2] 被放弃的任务的结果不会回灌")
+    stale_calls = []
+    zombie = threading.Event()
+    app.runner.run(lambda: zombie.wait(30))
+    pump(root, 0.3)
+    app.runner.force_reset()                     # 放弃它（线程还在后台挂着）
+    check("放弃后界面解锁", app.runner.busy is False)
+    app.runner.run(lambda: "fresh", on_done=lambda r: stale_calls.append(r))
+    pump(root, 0.6)
+    check("新任务正常收到自己的结果", stale_calls == ["fresh"])
+    zombie.set()                                 # 僵尸现在才结束 —— 结果必须被丢掉
+    pump(root, 0.8)
+    check("僵尸的结果没有回灌到新任务的回调（也不会清掉 busy）",
+          stale_calls == ["fresh"] and app.runner.busy is False)
+    check("主线程读不到任务令牌（令牌是各工作线程自己的）", app.runner.token is None)
 
     print("[3c] 按钮状态每秒自愈")
     # 直接改 runner 的内部状态，模拟「某处漏了一次解除禁用」这种状态漂移

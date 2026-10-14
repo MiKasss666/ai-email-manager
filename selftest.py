@@ -1,4 +1,4 @@
-"""selftest.py — 纯逻辑自测：不连接 Outlook、不调用 AI、不消耗任何额度。
+﻿"""selftest.py — 纯逻辑自测：不连接 Outlook、不调用 AI、不消耗任何额度。
 
 用法（在 Email_manager_beta 目录下）：
     py -3 selftest.py
@@ -53,9 +53,31 @@ check("缺 dorm_keywords 时补港科大默认值",
       "UGHousing" in config.from_dict({}).dorm_keywords)
 check("显式清空 dorm_keywords 时尊重用户",
       config.from_dict({"dorm_keywords": []}).dorm_keywords == [])
+check("缺 school_domains 键时补默认值 ust.hk",
+      config.from_dict({}).school_domains == ["ust.hk"])
+check("显式清空 school_domains 回落默认值（否则整箱邮件都不分级）",
+      config.from_dict({"school_domains": []}).school_domains == ["ust.hk"])
+check("school_domains 支持逗号分隔字符串",
+      config.from_dict({"school_domains": "ust.hk, hku.hk"}).school_domains == ["ust.hk", "hku.hk"])
+check("to_dict/from_dict 往返保留 school_domains",
+      config.from_dict(config.to_dict(cfg)).school_domains == cfg.school_domains)
 check("缺 language 键时用默认值 en", config.from_dict({}).language == "en")
 check("显式 language=zh 生效", config.from_dict({"language": "zh"}).language == "zh")
 check("无法识别的 language 回落默认值", config.from_dict({"language": "fr"}).language == "en")
+
+print("[1b] config.is_school_address（分级前置门槛）")
+school = config.from_dict({"school_domains": ["ust.hk"]})
+check("学生邮箱 @connect.ust.hk 命中", school.is_school_address("student@connect.ust.hk"))
+check("教职员邮箱 @ust.hk 命中", school.is_school_address("office@ust.hk"))
+check("大小写不敏感", school.is_school_address("STUDENT@CONNECT.UST.HK"))
+check("带显示名的地址命中", school.is_school_address("Alex Doe <student@connect.ust.hk>"))
+check("校外邮箱不命中", not school.is_school_address("news@instructure.com"))
+check("相似后缀不误判（ust.hk.evil.com 不是校内）",
+      not school.is_school_address("a@ust.hk.evil.com"))
+check("Exchange 内部地址（没有 @）不命中", not school.is_school_address("/O=EXCHANGELABS/CN=abc"))
+check("空地址不命中", not school.is_school_address(""))
+check("多域名配置生效",
+      config.from_dict({"school_domains": ["ust.hk", "hku.hk"]}).is_school_address("x@hku.hk"))
 check("缺 ai.active 时用默认值 deepseek", config.from_dict({}).ai_active == "deepseek")
 check("DeepSeek 模板用官方模型名 deepseek-flash",
       config.from_dict({}).ai_profiles["deepseek"].model == "deepseek-flash")
@@ -70,14 +92,220 @@ check("剥 ```json 围栏", ai.parse_json('```json\n[{"级别":"S"}]\n```') == [
 check("容忍前后废话", ai.parse_json('好的，结果如下：\n[1,2]\n以上。') == [1, 2])
 check("纯 JSON 对象", ai.parse_json('{"a": 1}') == {"a": 1})
 check("垃圾输入 → None", ai.parse_json("完全不是 JSON") is None)
+check("对象里含数组时不会被内层数组劫持（整段优先）",
+      ai.parse_json('{"a": [1, 2], "b": 3}') == {"a": [1, 2], "b": 3})
+check("JSONL：一行一个对象也能解析成数组",
+      ai.parse_json('{"级别": "A"}\n{"级别": "S"}\n{"级别": "C"}')
+      == [{"级别": "A"}, {"级别": "S"}, {"级别": "C"}])
+check("JSONL 最后一行写坏了：前面完整的仍能拿到",
+      ai.parse_json('{"级别": "A"}\n{"级别": "S"}\n{"级别')
+      == [{"级别": "A"}, {"级别": "S"}])
 
 print("[3] classifier")
 spec = classifier.build_spec(cfg)
 check("spec 含课程", "COMP1021" in spec)
 check("spec 含学院", "School of Engineering" in spec)
 check("spec 含宿舍关键词（港科大默认值）", "UGHousing" in spec)
-check("spec 含学校（港科大默认值）", "香港科技大学" in spec)
 check("spec 含加急天数", "30 天内 deadline" in spec)
+check("spec 含「学校邮件」判定步骤", "学校邮件" in spec)
+check("spec 用学校域名做确定性判据", cfg.school_domains[0] in spec)
+check("spec 不再用学校名当判级条件", "香港科技大学" not in spec)
+
+print("[3b] 学校邮件判定：AI 判断 + 域名确定性兜底")
+check("parse_school：bool", classifier.parse_school(True) is True
+      and classifier.parse_school(False) is False)
+check("parse_school：0/1", classifier.parse_school(1) is True
+      and classifier.parse_school(0) is False)
+check("parse_school：中文是/否", classifier.parse_school("是") is True
+      and classifier.parse_school("不是") is False)
+check("parse_school：否定短语", classifier.parse_school("不是学校邮件") is False)
+check("parse_school：整句否定（否，这是商家推广）", classifier.parse_school("否，这是商家推广") is False)
+check("parse_school：整句肯定（是，属于学校邮件）", classifier.parse_school("是，属于学校邮件") is True)
+check("parse_school：不属于 → False", classifier.parse_school("不属于学校邮件") is False)
+check("parse_school：肯定短语", classifier.parse_school("是学校邮件") is True)
+check("parse_school：认不出来 → None", classifier.parse_school("maybe") is None
+      and classifier.parse_school("") is None)
+
+_school_cfg = config.from_dict({"school_domains": ["ust.hk"]})
+_mixed = classifier.to_verdicts([
+    {"学校": True, "级别": "A", "截止日期": None},
+    {"学校": False, "级别": "S", "截止日期": None},
+    {"学校": True, "级别": "B", "截止日期": None},
+    {"级别": "C", "截止日期": None},          # 模型漏写「学校」
+], 4, _school_cfg)
+check("to_verdicts 解析「学校」字段",
+      [v.is_school for v in _mixed] == [True, False, True, True])
+check("漏写「学校」时保守按学校邮件处理（不漏分级）", _mixed[3].is_school)
+check("counts 不计入非学校邮件", classifier.counts(_mixed) == {"S": 0, "A": 1, "B": 1, "C": 1})
+
+_rescue_emails = [
+    {"subject": "Campus notice", "sender": "office@ust.hk", "entryid": "R-1"},
+    {"subject": "Shop promo", "sender": "promo@shop.com", "entryid": "R-2"},
+]
+_rescue = classifier.to_verdicts([{"学校": False, "级别": "C"},
+                                  {"学校": False, "级别": "C"}], 2, _school_cfg)
+check("AI 把学校邮件误判为非学校 → 域名兜底捞回来",
+      classifier.apply_school_override(_rescue_emails, _rescue, _school_cfg) == 1
+      and _rescue[0].is_school and not _rescue[1].is_school)
+check("not_school_entryids 只列被判为非学校邮件的（供 watcher 记名单）",
+      classifier.not_school_entryids(_rescue_emails, _rescue) == ["R-2"])
+
+print("[3c] apply_verdicts：非学校邮件一个字节都不写")
+
+
+class _WriteMsg:
+    """假 MailItem：只记录分类、标志位和 Save() 次数。"""
+
+    def __init__(self):
+        self.Categories = ""
+        self.FlagStatus = None
+        self.saves = 0
+
+    def Save(self):
+        self.saves += 1
+
+
+_m_school, _m_other = _WriteMsg(), _WriteMsg()
+_w_emails = [{"subject": "School stuff", "msg": _m_school},
+             {"subject": "Shop promo", "msg": _m_other}]
+_w_verdicts = classifier.to_verdicts([{"学校": True, "级别": "S", "截止日期": None},
+                                      {"学校": False, "级别": "A", "截止日期": None}],
+                                     2, _school_cfg)
+check("apply_verdicts 返回 (成功, 失败, 跳过)",
+      classifier.apply_verdicts(_w_emails, _w_verdicts, log=lambda *a: None) == (1, 0, 1))
+check("学校邮件被写入分类", _m_school.Categories == "S" and _m_school.saves == 1)
+check("非学校邮件完全没被动过", _m_other.Categories == "" and _m_other.saves == 0)
+check("拿不到判定算失败（触发重试），不算跳过",
+      classifier.apply_verdicts([{"subject": "x", "msg": _WriteMsg()}], [None],
+                                log=lambda *a: None) == (0, 1, 0))
+
+print("[3d] write_categories：只换自己的标签，用户自己的分类一律不动")
+
+
+class _CatMsg:
+    """假 MailItem：带一个已有的 Categories 字符串。"""
+
+    def __init__(self, categories):
+        self.Categories = categories
+        self.FlagStatus = None
+        self.saves = 0
+
+    def Save(self):
+        self.saves += 1
+
+
+_mc = _CatMsg("跟进, 重要")
+outlook.write_categories(_mc, ["A"])
+check("用户自己的分类被保留（并追加我们的级别）", _mc.Categories == "跟进, 重要, A")
+check("写回后确实 Save 了", _mc.saves == 1)
+
+_mc = _CatMsg("S, 跟进")
+outlook.write_categories(_mc, ["B"])
+check("我们自己的旧级别被替换，不叠加", _mc.Categories == "跟进, B")
+
+_mc = _CatMsg("A, B, C")
+outlook.write_categories(_mc, ["S"])
+check("多档叠加的脏数据被收敛成一个级别", _mc.Categories == "S")
+
+_mc = _CatMsg("S 紧急, 学期")
+outlook.write_categories(_mc, ["C"])
+check("历史命名（S 紧急）被顺手清掉", _mc.Categories == "学期, C")
+
+_mc = _CatMsg("Sum, 归档")
+outlook.write_categories(_mc, ["A"])
+check("报告标签 Sum 也属于我们自己，会被换掉", _mc.Categories == "归档, A")
+
+_mc = _CatMsg("")
+outlook.write_categories(_mc, ["Sum"])
+check("原本没有任何分类时只写我们的", _mc.Categories == "Sum")
+
+_mc = _CatMsg(" 跟进 ,  ")
+outlook.write_categories(_mc, ["A"])
+check("已有分类里的空白项被清掉", _mc.Categories == "跟进, A")
+
+check("本系统标签集合 = S/A/B/C/Sum + 历史命名",
+      set(outlook.OUR_CATEGORY_NAMES) == {"S", "A", "B", "C", "Sum",
+                                          "S 紧急", "A 重要", "B 普通", "C 可忽略"})
+
+print("[3e] 一封读不出正文的邮件不能拖垮整轮（逐封兜错）")
+
+
+class _PoisonMsg:
+    """假邮件：Body 会抛异常（IRM/加密邮件、正在被移动的邮件就是这样）。"""
+
+    def __init__(self, subject):
+        self.Subject = subject
+        self.SenderName = "Someone"
+        self.SenderEmailAddress = "a@ust.hk"
+        self.EntryID = "P-" + subject
+        self.Categories = ""
+        self.ReceivedTime = datetime.now()
+
+    @property
+    def Body(self):
+        raise RuntimeError("Body unavailable (IRM/encrypted or item moved)")
+
+
+class _PoisonItems:
+    def __init__(self, msgs):
+        self._msgs = msgs
+
+    def Sort(self, *_args):
+        pass
+
+    def __iter__(self):
+        return iter(self._msgs)
+
+
+class _PoisonNS:
+    def __init__(self, msgs):
+        self._msgs = msgs
+
+    def GetDefaultFolder(self, _fid):
+        msgs = self._msgs
+
+        class _Folder:
+            Items = _PoisonItems(msgs)
+        return _Folder()
+
+
+_poison_msgs = [_PoisonMsg("good-1"), _PoisonMsg("poison"), _PoisonMsg("good-2")]
+_poison_ok = True
+_poison_got = []
+try:
+    _poison_got = outlook.read_inbox(_PoisonNS(_poison_msgs), days=7, log=lambda *a: None)
+except Exception as _ex:                      # 旧行为：整轮直接抛异常
+    _poison_ok = False
+    print(f"      read_inbox raised: {type(_ex).__name__}: {_ex}")
+check("坏邮件不再让整轮抛异常", _poison_ok)
+check("三封邮件都在（坏的那封留空正文，不丢）",
+      [m["subject"] for m in _poison_got] == ["good-1", "poison", "good-2"])
+check("坏邮件其余字段仍可用（靠主题也能判级）",
+      _poison_got[1]["body"] == "" and _poison_got[1]["entryid"] == "P-poison")
+
+print("[3f] config.save 的临时文件名带 pid（两个实例不会互相写坏配置）")
+import tempfile  # noqa: E402
+import core.config as config_mod  # noqa: E402
+
+_tmp_dir = tempfile.mkdtemp()
+_tmp_cfg_path = os.path.join(_tmp_dir, "config.json")
+_seen_sources = []
+_orig_replace = config_mod.os.replace
+try:
+    def _spy_replace(src, dst):
+        _seen_sources.append(src)
+        return _orig_replace(src, dst)
+
+    config_mod.os.replace = _spy_replace
+    config.save(config.from_dict({"email": "a@b.c"}), _tmp_cfg_path)
+finally:
+    config_mod.os.replace = _orig_replace
+check("配置写进去了", os.path.exists(_tmp_cfg_path))
+check("临时文件名里带自己的 pid",
+      bool(_seen_sources) and f".{os.getpid()}." in os.path.basename(_seen_sources[0]))
+check("没留下临时文件", not [f for f in os.listdir(_tmp_dir) if f.endswith(".tmp")])
+os.remove(_tmp_cfg_path)
+os.rmdir(_tmp_dir)
 
 check("normalize_level 合法", [classifier.normalize_level(x) for x in ("s", "A", " b ", "C")] == list("SABC"))
 check("normalize_level 非法 → C", classifier.normalize_level("X") == "C"
@@ -102,6 +330,14 @@ check("非法级别 → C", v[3].level == "C")
 check("条数对不上 → None（防错位）", classifier.to_verdicts([{"级别": "S"}], 3, cfg) is None)
 check("非数组 → None", classifier.to_verdicts({"级别": "S"}, 1, cfg) is None)
 check("元素非 dict → None", classifier.to_verdicts(["S"], 1, cfg) is None)
+check("对象包裹（契约里的 items）也能解析",
+      (classifier.to_verdicts({"items": [{"级别": "S"}]}, 1, cfg) or [None])[0].level == "S")
+check("键名不认识、但只有一个数组值时也认",
+      (classifier.to_verdicts({"结果集": [{"级别": "B"}]}, 1, cfg) or [None])[0].level == "B")
+check("对象里有多个数组 → 不猜，返回 None",
+      classifier.to_verdicts({"a": [{"级别": "S"}], "b": [{"级别": "A"}]}, 1, cfg) is None)
+check("提示词要的是对象包裹（与 json_object 模式一致）",
+      '"items"' in classifier.build_prompt([{"subject": "x", "sender": "a@ust.hk", "body": "b"}], cfg))
 
 emails = [
     {"subject": "COMP1021 Homework 3", "body": "due soon"},
@@ -323,7 +559,13 @@ print("[10] connect() 不许把「附加」也挡掉（针对实际故障的回�
 # —— 冷却把「附加到已在运行的实例」也一起挡掉了。
 # 下面用桩替换 Dispatch，确保**每一次连接尝试都会真的去 Dispatch**。
 _saved_dispatch = outlook.win32com.client.Dispatch
+_saved_launch = outlook._launch_outlook
+_saved_minimize = outlook._minimize_outlook
+_saved_process_running = outlook._outlook_process_running
+_saved_launch_attempt = outlook._last_launch_attempt
 _silent = lambda *a, **k: None
+_launched = []
+import time as _time  # noqa: E402  桩里复刻退避计时用
 
 
 class _FakeApp:
@@ -332,9 +574,24 @@ class _FakeApp:
 
 
 try:
+    # 自测**绝不能启动用户的 Outlook**：把「启动」和「最小化」换成桩，
+    # 并把「有没有 OUTLOOK.EXE 进程」固定成否 —— 这样代码走的仍是启动分支，
+    # 但真正干活的 subprocess.Popen 不会执行（曾经真的把用户的 Outlook 拉起来过）。
+    def _fake_launch(log):
+        # 复刻真实 _launch_outlook 的关键副作用：记下本次启动尝试的时间（退避靠它）
+        _launched.append("launch")
+        outlook._last_launch_attempt = _time.time()
+
+    outlook._launch_outlook = _fake_launch
+    outlook._minimize_outlook = lambda app: None
+    outlook._outlook_process_running = lambda: False
+    outlook._last_launch_attempt = 0.0
+
     outlook.win32com.client.Dispatch = lambda progid: _FakeApp()
     _app, _ns = outlook.connect(log=_silent)
     check("Dispatch 能拿到实例时 connect 成功", _ns == {"ns": "MAPI"})
+    check("允许启动时走了一次「启动」分支（已被桩住，不会真的启动 Outlook）",
+          len(_launched) == 1)
 
     _calls = []
 
@@ -353,8 +610,13 @@ try:
     check("连续 3 次失败都抛 OutlookNotRunning", _raised == 3)
     check("连续 3 次都真的尝试了 Dispatch（没有被冷却/宽限期挡住）", len(_calls) == 3)
     check("尝试的是 Outlook.Application", set(_calls) == {"Outlook.Application"})
+    check("退避期内不再重复尝试启动 Outlook", len(_launched) == 1)
 finally:
     outlook.win32com.client.Dispatch = _saved_dispatch
+    outlook._launch_outlook = _saved_launch
+    outlook._minimize_outlook = _saved_minimize
+    outlook._outlook_process_running = _saved_process_running
+    outlook._last_launch_attempt = _saved_launch_attempt
 
 print("[11] 漏打 Sum 标签的总结报告能被找出来（假 COM 对象，不连 Outlook）")
 # 回归来源：plan_tick 只看"最新那一封"，所以只要报告之后又来了一封别的邮件，
@@ -647,6 +909,82 @@ try:
           summarizer.summarize_points(_emails(["m1", "m2"]), _cfg, log=_log) == ["", ""])
 finally:
     ai.ask = _saved_ask
+
+print("[14] 采集层过滤器：已判定为非学校邮件的 EntryID 不再重复送 AI")
+
+
+class _SchoolMsg:
+    """假邮件。被过滤掉的邮件，其 Body 属性会抛异常 —— 只要过滤器在 message_info()
+    之前生效，就绝不会碰到它；碰到了就是回归。"""
+
+    def __init__(self, subject, sender, entryid, days_ago=0):
+        self.Subject = subject
+        self.SenderName = "Someone"
+        self.SenderEmailAddress = sender
+        self.EntryID = entryid
+        self.Categories = ""
+        self.ReceivedTime = _dt.now() - timedelta(days=days_ago)
+        # 独立按发件人域名判断，不抄代码的结论
+        self._school = str(sender).lower().endswith("ust.hk")
+
+    @property
+    def Body(self):
+        if not self._school:
+            raise RuntimeError("被过滤掉的邮件不该读正文")
+        return "（校方邮件正文）"
+
+
+class _SchoolNS:
+    def __init__(self, msgs):
+        self._msgs = msgs
+
+    def GetDefaultFolder(self, _fid):
+        msgs = self._msgs
+
+        class _Folder:
+            Items = _OrderedItems(msgs)
+        return _Folder()
+
+
+_smsgs = [
+    _SchoolMsg("Assignment Graded: Homework 2, MATH1023", "ta@connect.ust.hk", "S-1", days_ago=0),
+    _SchoolMsg("Weekly deals from a shop", "promo@shop.com", "N-1", days_ago=1),
+    _SchoolMsg("HKUST Daily Event Alert", "events@ust.hk", "S-2", days_ago=1),
+    _SchoolMsg("Your AWS billing statement", "billing@amazon.com", "N-2", days_ago=2),
+    _SchoolMsg("sum", "me@connect.ust.hk", "S-3", days_ago=3),        # 指令邮件 → 照旧不进分级
+    _SchoolMsg("📬 邮件总结（全部）· 最近7天", "me@connect.ust.hk", "S-4", days_ago=1),  # 报告 → 照旧跳过
+]
+_sns = _SchoolNS(_smsgs)
+# watcher 会把「判定为非学校邮件」的 EntryID 记进 watch_state.json，这里模拟同一份名单
+_ignore = {"N-1", "N-2"}
+
+
+def _keep(msg):
+    return msg.EntryID not in _ignore
+
+
+_slog = []
+
+_sread = outlook.read_inbox(_sns, days=7, skip_classified=True,
+                            keep=_keep, log=_slog.append)
+check("read_inbox：名单里的邮件不再采集", [m["entryid"] for m in _sread] == ["S-1", "S-2"])
+check("read_inbox：被过滤的邮件记了条数",
+      any("skipped 2 mail(s)" in m for m in _slog))
+check("read_inbox：sum 指令与总结报告照旧不进分级",
+      all(m["entryid"] not in ("S-3", "S-4") for m in _sread))
+
+_slog.clear()
+_scollect = outlook.collect_new_mail(_sns, "S-3", days=7, max_items=100,
+                                     keep=_keep, log=_slog.append)
+check("collect_new_mail：走到基线为止，且跳过名单里的邮件",
+      [m["entryid"] for m in _scollect] == ["S-1", "S-2"])
+check("collect_new_mail：被过滤的邮件同样记条数",
+      any("skipped 2 mail(s)" in m for m in _slog))
+
+check("limit 只数通过过滤器的邮件",
+      [m["entryid"] for m in outlook.read_inbox(_sns, limit=1, days=7,
+                                                keep=_keep, log=lambda *a: None)]
+      == ["S-1"])
 
 print(f"\n全部通过：{ok} 项")
 print("\n--- build_spec 实际产出（配置缺字段时的样子）---")

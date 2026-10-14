@@ -34,6 +34,10 @@ LEGACY_CATEGORY_NAMES = ("S 紧急", "A 重要", "B 普通", "C 可忽略")
 SUM_NAME = "Sum"
 SUM_COLOR = 4  # 黄
 
+# 本系统写进邮件的分类名（含历史命名）。写回时**只替换这些**：
+# 用户自己定义的分类（含服务器规则打的）一律不碰 —— 见 write_categories()。
+OUR_CATEGORY_NAMES = frozenset(list(LEVELS) + [SUM_NAME] + list(LEGACY_CATEGORY_NAMES))
+
 # 我们自己生成的总结邮件，主题里一定含这个词 → 扫收件箱时要跳过，别把自己的报告再分一次级
 REPORT_SUBJECT_MARK = "邮件总结"        # 中文标记（历史版本的报告用的就是它）
 REPORT_SUBJECT_MARK_EN = "Email summary"   # 英文标记（language = en 时用）
@@ -684,20 +688,64 @@ def _naive(dt):
 
 
 def message_info(msg) -> Dict[str, Any]:
-    """把一个 MailItem 转成内部统一使用的邮件字典。"""
+    """把一个 MailItem 转成内部统一使用的邮件字典。
+
+    **逐字段兜错**：加密/IRM 邮件、正在被移动或删除的邮件，读 `Body` 会抛 COM
+    异常。旧实现没有兜错，而 read_inbox / collect_new_mail 是一封一封读的 ——
+    结果是**一封坏邮件把整轮 100 封全部拖死**，连续 3 轮还会让监听自动暂停
+    （用户看到的现象是"程序突然不动了"）。读不到的字段留空，尽量保住这封邮件的
+    其余信息（有主题就还能判级）。
+    """
+    def _read(name, default=None):
+        try:
+            value = getattr(msg, name)
+        except Exception:
+            return default
+        return default if value is None else value
+
+    body = _read("Body", "")
     return {
-        "entryid": msg.EntryID,
+        "entryid": _read("EntryID", ""),
         "msg": msg,
-        "subject": msg.Subject or "(no subject)",
-        "sender_name": msg.SenderName or "",
-        "sender": msg.SenderEmailAddress or "",
-        "body": (msg.Body or "").strip(),
-        "received": _naive(msg.ReceivedTime),
+        "subject": _read("Subject", "") or "(no subject)",
+        "sender_name": _read("SenderName", ""),
+        "sender": _read("SenderEmailAddress", ""),
+        "body": str(body or "").strip(),
+        "received": _naive(_read("ReceivedTime")),
     }
 
 
+def sender_address(msg) -> str:
+    """取发件人的 SMTP 地址，供「是不是校方邮件」判定用。
+
+    Exchange 内部发件人（SenderEmailType == "EX"）的 SenderEmailAddress 是
+    legacyExchangeDN（`/O=EXCHANGELABS/OU=...`），里面没有 @，拿它去比域名永远不匹配。
+    这时改问 ExchangeUser 要 PrimarySmtpAddress —— 这是内部邮件唯一可靠的 SMTP 来源。
+    取不到就原样返回（上层会判成「非校方」，宁漏勿错）。
+    """
+    try:
+        address = str(msg.SenderEmailAddress or "").strip()
+    except Exception:
+        return ""
+    if "@" in address:
+        return address
+    try:
+        sender = msg.Sender
+        exchange_user = sender.GetExchangeUser() if sender is not None else None
+    except Exception:
+        return address
+    if exchange_user is None:
+        return address
+    try:
+        return str(exchange_user.PrimarySmtpAddress or "").strip() or address
+    except Exception:
+        return address
+
+
 def collect_new_mail(ns, last_seen: Optional[str], *, days: Optional[int] = None,
-                     max_items: int = 100) -> List[Dict[str, Any]]:
+                     max_items: int = 100,
+                     keep: Optional[Callable[[Any], bool]] = None,
+                     log: Callable[..., None] = print) -> List[Dict[str, Any]]:
     """收件箱里比 last_seen 更新的邮件（新 → 旧）。
 
     走到 last_seen 就停，所以只会处理「真正新到的那些」，不会去啃整个历史收件箱。
@@ -705,6 +753,10 @@ def collect_new_mail(ns, last_seen: Optional[str], *, days: Optional[int] = None
     表现为「检测到新邮件却什么都没发生，按钮还一直是灰的」。
 
     跳过：我们自己的报告、sum 指令邮件、已经打过 S/A/B/C/Sum 的邮件。
+    keep：采集层过滤器。入参是 MailItem，返回 False 就不收这封。
+    当前用途：跳过「已被判定为非学校邮件」的 EntryID，避免每次启动重复送 AI。
+    判定发生在 message_info() **之前** —— 被过滤掉的邮件连正文都不会读。
+
     days / max_items 是兜底：万一 last_seen 那封已被删除或移走，也能收住范围。
     """
     items = ns.GetDefaultFolder(OL_FOLDER_INBOX).Items
@@ -712,6 +764,7 @@ def collect_new_mail(ns, last_seen: Optional[str], *, days: Optional[int] = None
     cutoff = datetime.now() - timedelta(days=days) if days is not None else None
 
     out: List[Dict[str, Any]] = []
+    skipped = 0
     for msg in items:
         try:
             entry_id = msg.EntryID
@@ -727,20 +780,29 @@ def collect_new_mail(ns, last_seen: Optional[str], *, days: Optional[int] = None
             continue
         if has_our_category(msg):
             continue
+        if keep is not None and not keep(msg):
+            skipped += 1
+            continue
 
         out.append(message_info(msg))
         if len(out) >= max_items:
             break
+    if skipped:
+        log(f"  skipped {skipped} mail(s) already ruled out of scope")
     return out
 
 
 def read_inbox(ns, *, limit: Optional[int] = None, days: Optional[int] = None,
-               skip_classified: bool = True) -> List[Dict[str, Any]]:
+               skip_classified: bool = True,
+               keep: Optional[Callable[[Any], bool]] = None,
+               log: Callable[..., None] = print) -> List[Dict[str, Any]]:
     """读收件箱待分级邮件（新 → 旧）。
 
     limit            最多读多少封（None = 不限）
     days             只读最近 N 天（利用时间降序，遇到更旧的就直接停）
     skip_classified  跳过已打 S/A/B/C/Sum 的邮件（要重新分级时传 False）
+    keep             采集层过滤器（MailItem → bool），在 message_info() 之前判定，
+                     被挡掉的邮件连正文都不读；当前用途是跳过已判定为非学校邮件的 EntryID
 
     始终跳过：我们自己生成的总结邮件、sum 指令邮件。
     """
@@ -749,6 +811,7 @@ def read_inbox(ns, *, limit: Optional[int] = None, days: Optional[int] = None,
 
     cutoff = datetime.now() - timedelta(days=days) if days is not None else None
     emails: List[Dict[str, Any]] = []
+    skipped = 0
 
     for msg in items:
         received = _naive(msg.ReceivedTime)
@@ -758,10 +821,15 @@ def read_inbox(ns, *, limit: Optional[int] = None, days: Optional[int] = None,
             continue
         if skip_classified and has_our_category(msg):
             continue
+        if keep is not None and not keep(msg):
+            skipped += 1
+            continue
 
         emails.append(message_info(msg))
         if limit is not None and len(emails) >= limit:
             break
+    if skipped:
+        log(f"  skipped {skipped} mail(s) already ruled out of scope")
     return emails
 
 
@@ -800,9 +868,21 @@ def read_recent(ns, *, days: int, letters: str = "sabc") -> List[Dict[str, Any]]
 def write_categories(msg, names: Sequence[str], flag: Optional[int] = None) -> None:
     """把分类写回邮件；flag 不为 None 时同时设置后续标志（红旗）。
 
+    **只换自己的标签，不动用户的分类**：先把我们写过的名字剔掉
+    （S/A/B/C/Sum，以及历史命名「S 紧急」这类），再把新名字追加到剩下的后面。
+    这样：
+
+      · 用户自定义的、以及服务器规则打的分类 → 原样保留；
+      · 我们自己的旧级别 → 被替换而不是层层叠加（重判不会变成 "A, S"）；
+      · 历史命名 → 顺手清掉，邮件上只留 S/A/B/C/Sum 这一套。
+
+    旧实现是 `msg.Categories = ", ".join(names)`，整串覆盖 ——
+    用户自己打的标签会在分级那一刻被抹掉，且无法撤销。
+
     Save() 必须调用，否则分类不会落盘。
     """
-    msg.Categories = ", ".join(names)
+    kept = [c for c in category_names(msg) if c not in OUR_CATEGORY_NAMES]
+    msg.Categories = ", ".join(kept + list(names))
     if flag is not None:
         msg.FlagStatus = flag
     msg.Save()

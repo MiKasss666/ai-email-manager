@@ -71,6 +71,8 @@ def cmd_check(cfg: config.Config, test_ai: bool = False) -> int:
     print(f"  email {cfg.email or '(empty)'} / name {cfg.name or '(empty)'} / "
           f"student id {cfg.student_id or '(empty)'}")
     print(f"  faculty {cfg.faculty or '(empty)'} / school {cfg.school or '(empty)'}")
+    print(f"  school domains (decided as school mail without asking the AI): "
+          f"{', '.join(cfg.school_domains) or '(empty)'}")
     print(f"  enrolled courses: {', '.join(cfg.courses) or '(empty)'}")
     print(f"  summary recipient {cfg.recipient or '(empty)'} / covering the last "
           f"{cfg.summary_days} day(s)")
@@ -189,7 +191,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                                           dry_run=args.dry_run, force=args.force, log=print)
         print(f"\nDone: read {stats['read']}; "
               f"S={stats['S']} A={stats['A']} B={stats['B']} C={stats['C']}; "
-              f"ok {stats['ok']}, failed {stats['failed']}")
+              f"ok {stats['ok']}, failed {stats['failed']}, "
+              f"skipped {stats.get('skipped', 0)} (not school mail)")
         return 2 if stats["failed"] else 0
 
     count = summarizer.summarize_inbox(cfg, args.letters, log=print)

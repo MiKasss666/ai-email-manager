@@ -227,11 +227,25 @@ def probe(ai_cfg: AiProfile, *, log: Callable[..., None] = print) -> str:
 def parse_json(text: str) -> Optional[Any]:
     """从模型输出里抠出 JSON。
 
-    容忍 ```json 围栏和前后解释文字 —— 模型偶尔会加废话，不值得因此丢一整批邮件。
+    三种写法都要吃下：
+      1. **整段就是合法 JSON** —— 必须最先试。否则下面「找第一个 [ 到最后一个 ]」的
+         启发式会把 `{"a": [1, 2]}` 里那个内层数组当成整个结果，语义就漂了；
+      2. 前后有解释文字或 ```json 围栏 → 按括号切片抠出来（老路径，保持不变）；
+      3. **JSONL**：一行一个 JSON 对象。实测 deepseek-flash 在 json_object 模式下
+         会把数组拆成一行一个对象写出来 —— 每行都合法、整体却不是合法 JSON，
+         旧实现整批作废，白丢一次调用（日志里真的出现过）。
     """
     if not text:
         return None
     cleaned = re.sub(r"```(?:json)?", "", text).strip()
+    if not cleaned:
+        return None
+
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
     for opener, closer in (("[", "]"), ("{", "}")):
         start, end = cleaned.find(opener), cleaned.rfind(closer)
         if start == -1 or end <= start:
@@ -240,7 +254,32 @@ def parse_json(text: str) -> Optional[Any]:
             return json.loads(cleaned[start:end + 1])
         except Exception:
             continue
+
+    values = _decode_stream(cleaned)
+    if values:
+        return values if len(values) > 1 else values[0]
     return None
+
+
+def _decode_stream(text: str) -> Optional[list]:
+    """从第一个 `{` 或 `[` 开始，逐个解码连续出现的 JSON 值（JSONL 那种）。"""
+    starts = [i for i in (text.find("{"), text.find("[")) if i != -1]
+    if not starts:
+        return None
+    decoder = json.JSONDecoder()
+    out = []
+    index = min(starts)
+    while index < len(text):
+        while index < len(text) and text[index] in " \t\r\n,":
+            index += 1
+        if index >= len(text):
+            break
+        try:
+            value, index = decoder.raw_decode(text, index)
+        except ValueError:
+            break                      # 剩下的正是写坏了的那一段
+        out.append(value)
+    return out or None
 
 
 # ── HTTP 底座 ─────────────────────────────────────────────────────
