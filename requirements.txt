@@ -1,12 +1,12 @@
-# 运行本程序所需的第三方库
 # Third-party dependencies for this app.
+# 运行本程序所需的第三方库
 #
-# 只需要 pywin32（用于通过 COM 操作 Outlook 经典版）。
 # Only pywin32 is needed — it drives Outlook Classic through COM.
+# 只需要 pywin32（用于通过 COM 操作 Outlook 经典版）。
 #
-# 安装 / Install:
+# Install / 安装:
 #     py -3 -m pip install -r requirements.txt
 #
-# 其余全部使用 Python 标准库（urllib / tkinter / json / re ...），没有别的依赖。
 # Everything else is Python standard library (urllib / tkinter / json / re ...), no other deps.
+# 其余全部使用 Python 标准库（urllib / tkinter / json / re ...），没有别的依赖。
 pywin32>=306
