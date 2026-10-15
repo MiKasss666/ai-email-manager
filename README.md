@@ -22,6 +22,18 @@ Four sections: **Prerequisites → Configuration → Classification logic → Us
 
 ---
 
+## What's new in v2.0.1
+
+A patch release on top of v2.0.0 — all of it is fixing things that v2.0.0 got wrong.
+
+- **Fixed: writing categories back failed on every mail** with `HTTP 405 ... The OData request is not supported`. The mail id was lost between two normalisation passes, so the PATCH was sent to `/me/messages/` with no id. Reading worked, which is why it looked like a permission problem. The red flag and the `Sum` tag were affected too.
+- **Fixed: mail from your own faculty/department is A again.** The faculty's identity lives in the sender's **display name** (`SCI/HOME, School of Science <advise@ust.hk>`) and in the **signature at the end of the body** — and the AI prompt saw neither (the body was truncated to the first 400 characters and the display name was not sent at all). The same sender came out as A, B, C and S across six mails. There is now a deterministic rule: mail from your faculty → **at least A**.
+- **Fixed: S means "act now" again.** The "deadline within N days → S" escalation is no longer limited to A (a university-wide application with a real form deadline used to stay at B), an **event date is not a deadline** (a talk happening soon is not S), and anything already **expired** drops to C.
+- **Changed: enrolled-course mail is "at least A" instead of "forced S".** Notifications like `lecture 12 has started!` or `Assignment Graded` no longer fill up S; S is left to the "must do something + has a deadline" test.
+- **Changed: `urgent_days` default is 14 days** (was 30), so S stays meaningful.
+- **Fixed: a failed batch is retried in halves** (40 → 20+20 → …) instead of losing all 40 mails at once to a single bad reply.
+- **Fixed: the Activity log no longer repeats `connected as ...` every 30 seconds**, and it is fully English now.
+
 ## What's new in v2.0.0
 
 - **The mail backend moved from Outlook COM to Microsoft Graph.** Desktop (Classic) Outlook is **no longer required at all** — the app works with Outlook not installed, not running and not signed in. Reads (inbox, bodies, categories, read state) and writes (the S/A/B/C categories, the red flag, the summary email) all go to the mailbox through the Graph REST API over HTTPS.
@@ -157,7 +169,7 @@ Model names change over time — always check your provider's docs.
 | `summary_recipient` | Where the summary goes; empty = send to yourself. | empty |
 | `summary_days` | How many days the summary covers. | `7` |
 | `batch_size` | Emails per AI request. | `40` |
-| `urgent_days` | A deadline within N days counts as urgent (A → S). | `30` |
+| `urgent_days` | A deadline within N days means "act now" (needs action + deadline → S). | `14` |
 | `catchup_days` | On startup, classify unlabelled mail from the last N days; **`0` disables**. | `7` |
 | `ai.active` | Which backend is active. | `deepseek` |
 | `ai.profiles.<name>.base_url` | API endpoint. | see above |
@@ -375,6 +387,18 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 
 ---
 
+## 版本更新 · v2.0.1
+
+v2.0.0 之上的补丁版 —— 全部是在修 v2.0.0 没做对的地方。
+
+- **修复：写回分类全部失败**，报 `HTTP 405 ... The OData request is not supported`。邮件 id 在两次归一化之间丢了，PATCH 打到没有 id 的 `/me/messages/` 上。读邮件是正常的，所以看起来像权限问题；红旗与 `Sum` 标签同样受影响。
+- **修复：你学院/系发来的邮件重新稳定为 A。** 学院身份藏在发件人**显示名**（`SCI/HOME, School of Science <advise@ust.hk>`）和**正文末尾的签名**里 —— 而提示词两者都没看到（正文被截断到开头 400 字符，显示名压根没送）。同一个发件人的 6 封邮件因此出现 A/B/C/S 四种级别。现在有一条确定性规则：我学院发来的 → **至少 A**。
+- **修复：S 重新等于"现在要动手"。** "N 天内有截止 → S"不再限定在 A 里（一份正文写着真实交表截止的校级申请原本停在 B）；**活动举办日期不算截止**（快开的讲座不是 S）；**已经过期**的降到 C。
+- **变更：课程邮件改为"至少 A"，不再一律顶成 S。** `lecture 12 has started!`、`Assignment Graded` 这类通知不再堆进 S；S 交回给"要动手 + 有截止"判断。
+- **变更：`urgent_days` 默认 30 → 14 天**，让 S 保持区分度。
+- **修复：失败的批次改为对半重试**（40 → 20+20 → …），不再因为一次坏回复把 40 封全丢掉。
+- **修复：活动日志不再每 30 秒重复打印 `connected as ...`**，并且已全英文。
+
 ## 版本更新 · v2.0.0
 
 - **邮件后端从 Outlook COM 换成 Microsoft Graph。** **不再需要**桌面版（经典版）Outlook——没装、没开、没登录都能用。读取（收件箱、正文、分类、已读状态）与写入（写回 S/A/B/C 分类、红旗、发送总结邮件）全部通过 HTTPS 调用 Graph REST API 完成。
@@ -510,7 +534,7 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 | `summary_recipient` | 总结报告发给谁；留空 = 发给自己。 | 空 |
 | `summary_days` | 总结覆盖最近多少天。 | `7` |
 | `batch_size` | 每次送给模型的邮件数。 | `40` |
-| `urgent_days` | deadline 在多少天内算"加急"（A 升 S）。 | `30` |
+| `urgent_days` | deadline 在多少天内算"要动手"（需做某事 + 有截止 → S）。 | `14` |
 | `catchup_days` | 启动时补分类最近多少天的未分类邮件；**`0` = 关闭**。 | `7` |
 | `ai.active` | 当前使用的后端名。 | `deepseek` |
 | `ai.profiles.<名>.base_url` | 接口地址。 | 见上表 |

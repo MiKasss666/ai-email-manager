@@ -343,7 +343,7 @@ class Config:
 
     # 分级行为
     batch_size: int = 40                 # 每次送给模型的邮件数
-    urgent_days: int = 30                # deadline 在多少天内算「加急」（A 升 S）
+    urgent_days: int = 14                # deadline 在多少天内算「加急」（要动手 + 有截止 → S）
     catchup_days: int = 7                # 启动时补分类最近 N 天的未分类邮件（0 = 关闭）
     dorm_keywords: List[str] = field(default_factory=lambda: list(DEFAULT_DORM_KEYWORDS))
     course_code_regex: str = DEFAULT_COURSE_CODE_RE
@@ -471,7 +471,7 @@ def from_dict(raw: dict) -> Config:
         summary_recipient=_as_str(raw.get("summary_recipient")),
         summary_days=_as_int(raw.get("summary_days"), 7, 1, 365),
         batch_size=_as_int(raw.get("batch_size"), 40, 1, 200),
-        urgent_days=_as_int(raw.get("urgent_days"), 30, 1, 365),
+        urgent_days=_as_int(raw.get("urgent_days"), 14, 1, 365),
         # 0 是合法值（= 关闭启动补分类），所以下限是 0
         catchup_days=_as_int(raw.get("catchup_days"), 7, 0, 365),
         dorm_keywords=dorm,
