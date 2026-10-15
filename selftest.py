@@ -1100,6 +1100,45 @@ check("logged_in 只查本地凭据（不联网）", isinstance(graph_mod.logged
 check("token 缓存默认放在 config.json 旁边",
       os.path.basename(graph_mod.token_path(config.from_dict({}).graph)) == "graph_token.json")
 
+# ── 回归：二次归一化把邮件 id 弄丢，导致所有写回 PATCH /me/messages/ → HTTP 405 ──
+# 实测踩过：GraphSession 拿到的是已归一化的字典，再喂给 GraphMessage 时 id 变空串，
+# 个人版日志里刷 "could not tag a report: HTTP 405 ..."。单测当时用的是原始条目，所以没抓到。
+check("normalize 幂等：二次归一化不丢 id",
+      graph_mod.normalize(graph_mod.normalize(_raw))["entryid"] == "AAMkAGI2")
+
+
+class _FakeClient:
+    """只实现 GraphSession/写回需要的那几个方法。"""
+
+    def __init__(self):
+        self.calls = []
+
+    def inbox_raw(self, top=10, days=None, select=""):
+        return [_raw]                      # 必须是**原始**条目
+
+    def set_categories(self, message_id, names, flag=None):
+        self.calls.append((message_id, list(names), flag))
+
+
+_fclient = _FakeClient()
+_ns = graph_mod.GraphSession(_fclient)
+_sess_msgs = _ns.recent()
+check("GraphSession 保住邮件 id（用原始条目构造）",
+      bool(_sess_msgs) and _sess_msgs[0].id == "AAMkAGI2"
+      and _sess_msgs[0].EntryID == "AAMkAGI2")
+check("GraphSession 保住收件时间", _sess_msgs[0].ReceivedTime is not None)
+check("message_info 给出的 entryid 非空",
+      bool(outlook.message_info(_sess_msgs[0]).get("entryid")))
+graph_mod.write_categories(_sess_msgs[0], ["Sum"])
+check("写回用的是真实 id（不是空串）",
+      _fclient.calls == [("AAMkAGI2", ["Sum"], None)])
+try:
+    graph_mod.GraphMail("token").set_categories("", ["Sum"])
+    _empty_guard = False
+except graph_mod.GraphError:
+    _empty_guard = True
+check("空 id 会被拦下（不发注定 405 的请求）", _empty_guard)
+
 print("[17] Graph 登录交互：设备码进日志 + 自动打开浏览器（离线桩，不联网）")
 _saved_post = graph_mod._post_form
 _saved_open = graph_mod.webbrowser.open

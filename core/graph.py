@@ -270,8 +270,17 @@ def _device_login(gcfg, log: Callable[..., None], scopes: str) -> Dict[str, Any]
 
     interval = int(device.get("interval") or 5)
     deadline = time.time() + int(device.get("expires_in") or 900)
+    started = last_notice = time.time()
     while time.time() < deadline:
         time.sleep(interval)
+        now = time.time()
+        # 心跳：这一步是在等**用户**操作，可能等几分钟。不吭声的话界面看起来像卡死，
+        # 实测就有人等到 132 秒然后点了 Force reset。
+        if now - last_notice >= 20:
+            last_notice = now
+            log(f"[graph] still waiting for you to finish signing in ... "
+                f"{int(now - started)}s (device code {code}, "
+                f"expires in {int(deadline - now)}s)")
         status, payload = _post_form(LOGIN.format(tenant=tenant) + "/token", {
             "grant_type": DEVICE_GRANT, "client_id": client_id,
             "device_code": device["device_code"]})
@@ -355,7 +364,14 @@ def normalize(message: Dict[str, Any]) -> Dict[str, Any]:
 
     真实邮箱形状并不统一（`body` 可能是对象也可能是字符串、`from` 同理），
     这里按"能拿到多少算多少"处理：一封形状奇怪的邮件不该让整轮挂掉。
+
+    **幂等**：已经是归一化过的字典就直接返回。少了这道保护会出事 ——
+    归一化后的字段叫 `entryid` 而不是 `id`，再归一化一次 id 就变成空字符串，
+    写回时 PATCH 会打到 `/me/messages/`（HTTP 405）。（实测踩过：所有写回全废。）
     """
+    if isinstance(message, dict) and "entryid" in message and "id" not in message:
+        return message
+
     name, address = _address_of(message.get("from"))
     if not address:
         alt_name, alt_address = _address_of(message.get("sender"))
@@ -432,8 +448,13 @@ class GraphMail:
     def me(self) -> Dict[str, Any]:
         return graph_call("GET", "/me?$select=displayName,userPrincipalName,mail,id", self.token)
 
-    def inbox(self, top: int = 10, *, days: Optional[int] = None,
-              select: str = SELECT) -> List[Dict[str, Any]]:
+    def inbox_raw(self, top: int = 10, *, days: Optional[int] = None,
+                  select: str = SELECT) -> List[Dict[str, Any]]:
+        """收件箱最新若干封的**原始** Graph 条目（新 → 旧）。
+
+        内部读邮件一律用这个 + GraphMessage —— GraphMessage 需要原始条目里的 `id`
+        和 `receivedDateTime`；喂它归一化后的字典会把这些字段弄丢。
+        """
         params = {"$top": str(int(top)), "$select": select,
                   "$orderby": "receivedDateTime desc"}
         if days:
@@ -443,7 +464,13 @@ class GraphMail:
         # 必须 urlencode：`$orderby` 里有空格，直接拼进 URL 会被 urllib 拒绝
         payload = graph_call("GET", "/me/mailFolders/inbox/messages?"
                              + urllib.parse.urlencode(params), self.token)
-        return [normalize(item) for item in (payload.get("value") or [])]
+        return list(payload.get("value") or [])
+
+    def inbox(self, top: int = 10, *, days: Optional[int] = None,
+              select: str = SELECT) -> List[Dict[str, Any]]:
+        """归一化后的收件箱列表（命令行/诊断脚本用）。"""
+        return [normalize(item)
+                for item in self.inbox_raw(top=top, days=days, select=select)]
 
     def categories_of(self, message_id: str) -> List[str]:
         payload = graph_call("GET", "/me/messages/"
@@ -461,6 +488,10 @@ class GraphMail:
 
     def set_categories(self, message_id: str, names: Sequence[str],
                        flag: Optional[int] = None) -> None:
+        # 空 id 会打到 /me/messages/ 上 —— Graph 对它的 PATCH 回 405，报错还很难懂。
+        # 宁可在这里明确失败，也不要发出一个注定被拒的请求。
+        if not (message_id or "").strip():
+            raise GraphError("no message id to write to (the mail object lost its id)")
         body: Dict[str, Any] = {"categories": list(names)}
         if flag is not None:
             body["flag"] = {"flagStatus": "flagged" if flag else "notFlagged"}
@@ -497,7 +528,8 @@ class GraphSession:
     def recent(self, *, days: Optional[int] = None, force: bool = False) -> List[GraphMessage]:
         now = time.time()
         if force or now - self._recent_at > RECENT_TTL:
-            raw = self.client.inbox(top=RECENT_MAX, days=days)
+            # 必须用原始条目：GraphMessage 要靠里面的 id / receivedDateTime
+            raw = self.client.inbox_raw(top=RECENT_MAX, days=days)
             self._recent = [GraphMessage(item, self.client) for item in raw]
             self._recent_at = now
         return self._recent

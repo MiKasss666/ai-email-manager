@@ -392,7 +392,7 @@ class WatchController:
         已打过标签的会被跳过，重复执行无害。
         """
         try:
-            self._runner.set_phase("tagging report mail in Outlook")
+            self._runner.set_phase("tagging report mail")
             reports = outlook.untagged_reports(ns, days=REPORT_TAG_DAYS)
         except Exception as ex:
             self._log(f"[watch] could not scan for untagged reports: {type(ex).__name__}: {ex}")
