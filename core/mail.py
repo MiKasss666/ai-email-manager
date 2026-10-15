@@ -71,14 +71,14 @@ del _name, _value
 
 
 def describe() -> str:
-    """给日志/自检用的一句话说明当前后端。"""
+    """给日志/自检用的一句话说明当前后端（日志统一用英文）。"""
     if BACKEND == "outlook":
-        return "outlook (Outlook 经典版 + COM)"
+        return "outlook (Outlook Classic + COM)"
     try:
         from . import config as config_mod
         gcfg = config_mod.load().graph
-        who = f"client_id={gcfg.client_id[:8]}…" if gcfg.client_id else "用微软公开客户端"
-        return f'graph (Microsoft Graph, tenant={gcfg.tenant}, {who})'
+        who = f"client_id={gcfg.client_id[:8]}..." if gcfg.client_id else "Microsoft public client"
+        return f"graph (Microsoft Graph, tenant={gcfg.tenant}, {who})"
     except Exception:
         return "graph (Microsoft Graph)"
 

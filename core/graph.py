@@ -237,32 +237,35 @@ def _device_login(gcfg, log: Callable[..., None], scopes: str) -> Dict[str, Any]
         if status == 200 and isinstance(payload, dict) and payload.get("device_code"):
             client_id, label, device = cid, name, payload
             break
-        log(f"[graph] 客户端 {name} 不可用：{_explain(status, payload)[:150]}")
+        log(f"[graph] client {name} is not usable: {_explain(status, payload)[:150]}")
     if device is None:
         raise GraphError(
-            "拿不到设备码：这个租户可能禁止了第三方应用或设备码登录。\n"
-            "        请到 https://entra.microsoft.com 注册一个应用，把 client_id 填进 "
-            "config.json 的 graph.client_id")
+            "Could not obtain a device code: this tenant may block third-party apps or the "
+            "device-code flow.\n"
+            "        Register an app at https://entra.microsoft.com and put its client id "
+            "into config.json -> graph.client_id")
 
     code = device.get("user_code") or ""
     sign_in, carries_code = _sign_in_url(device, code)
     log("")
-    log("[graph] ================ 需要登录 Microsoft 账号 ================")
-    log(f"[graph] 设备码：{code}")              # 单独一行，方便在日志区复制
-    log(f"[graph] 打开这个网址：{sign_in}")
-    log(f"[graph] 申请权限：{scopes}")
-    log(f"[graph] 登录用的应用：{label}")
-    log("[graph] ======================================================")
+    log("[graph] ================ Microsoft sign-in required ================")
+    log(f"[graph] Device code: {code}")        # 单独一行，方便在日志区复制
+    log(f"[graph] Open this page: {sign_in}")
+    log(f"[graph] Permissions requested: {scopes}")
+    log(f"[graph] Signing in with app: {label}")
+    log("[graph] ===========================================================")
     if _copy_to_clipboard(code):
-        log("[graph] 设备码已复制到剪贴板 —— 网页里直接 Ctrl+V 就行")
+        log("[graph] Device code copied to the clipboard - just press Ctrl+V on that page")
     if getattr(gcfg, "open_browser", True):
         try:
             webbrowser.open(sign_in)
-            hint = "（链接里带着设备码，通常不用手输）" if carries_code else ""
-            log(f"[graph] 已自动打开浏览器{hint}；若没弹出，请手动打开上面的网址")
+            hint = " (the link already carries the device code)" if carries_code else ""
+            log(f"[graph] Opened your browser{hint}; if it did not appear, "
+                f"open the page above yourself")
         except Exception as ex:
-            log(f"[graph] 打开浏览器失败（{type(ex).__name__}），请手动打开上面的网址")
-    log("[graph] 登录完成后本程序会自己继续，不需要其他操作 ...")
+            log(f"[graph] Could not open a browser ({type(ex).__name__}) - "
+                f"please open the page above yourself")
+    log("[graph] This window continues by itself once you finish signing in ...")
     log("")
 
     interval = int(device.get("interval") or 5)
@@ -274,7 +277,7 @@ def _device_login(gcfg, log: Callable[..., None], scopes: str) -> Dict[str, Any]
             "device_code": device["device_code"]})
         if status == 200 and isinstance(payload, dict) and payload.get("access_token"):
             payload["_client_id"] = client_id
-            log(f"[graph] 登录成功（{label}）")
+            log(f"[graph] signed in ({label})")
             return payload
         error = (payload or {}).get("error")
         if error == "authorization_pending":
@@ -283,10 +286,13 @@ def _device_login(gcfg, log: Callable[..., None], scopes: str) -> Dict[str, Any]
             interval += 5
             continue
         raise GraphError(
-            f"登录失败：{error} —— {str((payload or {}).get('error_description'))[:300]}\n"
-            f"        若提示需要管理员批准，说明该租户不允许用户自行同意；"
-            f"可改用 Outlook 后端（config.json → mail_source: \"outlook\"）")
-    raise GraphError("设备码过期（15 分钟）—— 重新启动程序即可再试一次")
+            f"Sign-in failed: {error} - "
+            f"{str((payload or {}).get('error_description'))[:300]}\n"
+            f"        If it says admin approval is required, this tenant does not allow "
+            f"users to consent; use the legacy backend instead "
+            f"(config.json -> mail_source: \"outlook\")")
+    raise GraphError("The device code expired after 15 minutes - start the app again "
+                     "to get a new one")
 
 
 def _refresh(gcfg, cache: Dict[str, Any], log: Callable[..., None],
@@ -301,7 +307,8 @@ def _refresh(gcfg, cache: Dict[str, Any], log: Callable[..., None],
     if status == 200 and isinstance(payload, dict) and payload.get("access_token"):
         payload["_client_id"] = client_id
         return payload
-    log(f"[graph] 缓存的登录凭据失效了（{_explain(status, payload)[:120]}），需要重新登录")
+    log(f"[graph] the cached credential has expired ({_explain(status, payload)[:120]}); "
+        f"signing in again")
     return None
 
 
@@ -535,17 +542,18 @@ def connect(*, auto_launch: bool = True,
     gcfg = _settings()
     read_only = (not auto_launch) or os.environ.get("EM_GRAPH_READ_ONLY") == "1"
     if read_only:
-        log("[graph] 只读模式（只申请 Mail.Read，不会写回任何分类）")
+        log("[graph] read-only mode (Mail.Read only - nothing is written back)")
     try:
         token = get_token(gcfg, log, write=not read_only)
     except GraphError as ex:
-        raise OutlookNotRunning(f"Graph 连接失败：{ex}") from ex
+        raise OutlookNotRunning(f"Graph connection failed: {ex}") from ex
     client = GraphMail(token)
     try:
         me = client.me()
     except GraphError as ex:
-        raise OutlookNotRunning(f"Graph 读取身份失败：{ex}") from ex
-    log(f"[graph] 已连接：{me.get('displayName')} <{me.get('userPrincipalName') or me.get('mail')}>")
+        raise OutlookNotRunning(f"Graph could not read your account: {ex}") from ex
+    log(f"[graph] connected as {me.get('displayName')} "
+        f"<{me.get('userPrincipalName') or me.get('mail')}>")
     return client, GraphSession(client)
 
 
