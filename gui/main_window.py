@@ -205,13 +205,14 @@ class MainWindow:
                     what = phase or "The current step"
                     if phase.startswith("waiting for the AI") or phase.startswith("building the summary"):
                         why = ("The AI provider has not answered. That is usually a slow or "
-                               "unavailable API on their side (503/504), not an Outlook problem. "
+                               "unavailable API on their side (503/504), not a mailbox problem. "
                                "Wait a bit, or click Force reset and try again later; you can also "
                                "switch to another backend in AI setting.")
                     else:
-                        why = ("Outlook has not answered. It is most likely showing a dialog "
-                               "(profile picker or security prompt) or still starting. Bring "
-                               "Outlook to the front and dismiss it.")
+                        why = ("The mailbox has not answered. With the legacy Outlook "
+                               "backend it is most likely showing a dialog (profile picker "
+                               "or security prompt) - bring Outlook to the front and dismiss "
+                               "it; with the Graph backend check your network connection.")
                     self.log.write(f"[warn] {what} has not finished for {elapsed:.0f}s. {why} "
                                    f"If the task really is stuck, click Force reset.")
             else:
@@ -235,7 +236,8 @@ class MainWindow:
                 "Force reset",
                 f"A task has been running for {elapsed:.0f}s without finishing.\n\n"
                 f"This only unlocks the interface; the stuck operation itself cannot be "
-                f"cancelled. A stuck task is usually Outlook waiting on a dialog.\n\n"
+                f"cancelled. A stuck task is usually the mailbox waiting on a dialog "
+                f"(legacy Outlook backend) or a stalled network call.\n\n"
                 f"Reset now?",
                 parent=self.root):
             return
@@ -379,7 +381,7 @@ class MainWindow:
             if not messagebox.askyesno(
                     "Confirm classification",
                     f"Read the last {days} day(s) of your inbox, classify them with AI "
-                    f"and write the S/A/B/C categories back to Outlook.\n\n"
+                    f"and write the S/A/B/C categories back to your mailbox.\n\n"
                     f"This modifies categories and flags on your real mail. Continue?",
                     parent=self.root):
                 return

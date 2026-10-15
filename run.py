@@ -3,7 +3,7 @@
 用法（在 Email_manager_beta 目录下执行）：
 
     py -3 run.py check [--ai]
-        自检：配置 / AI 后端 / Outlook 连接。只读，不改任何邮件。
+        自检：配置 / AI 后端 / 邮箱连接。只读，不改任何邮件。
         --ai  额外发一个最小请求，实测 AI 后端是否真的通（会消耗极少量额度）
 
     py -3 run.py providers
@@ -103,13 +103,13 @@ def cmd_check(cfg: config.Config, test_ai: bool = False) -> int:
     try:
         _app, ns = outlook.connect(auto_launch=False)   # 只读自检不该顺手启动 Outlook
         inbox = ns.GetDefaultFolder(outlook.OL_FOLDER_INBOX)
-        print(f"[Outlook] connected; inbox \"{inbox.Name}\" holds {inbox.Items.Count} mail(s)")
+        print(f"[Mail] connected; inbox \"{inbox.Name}\" holds {inbox.Items.Count} mail(s)")
         names = outlook.existing_categories(ns)
         missing = [level for level in config.LEVELS if level not in names]
         if outlook.SUM_NAME not in names:
             missing.append(outlook.SUM_NAME)
-        print(f"[Outlook] existing categories: {', '.join(names) or '(none)'}")
-        print(f"[Outlook] missing categories: {', '.join(missing) or '(none, S/A/B/C/Sum all present)'}")
+        print(f"[Mail] existing categories: {', '.join(names) or '(none)'}")
+        print(f"[Mail] missing categories: {', '.join(missing) or '(none, S/A/B/C/Sum all present)'}")
         if missing:
             print("          (classify creates missing categories automatically)")
 
@@ -119,14 +119,18 @@ def cmd_check(cfg: config.Config, test_ai: bool = False) -> int:
             wrong = {name: value for name, value in colors.items()
                      if expected.get(name) != value}
             if wrong:
-                print(f"[Outlook] colour mismatch: {wrong} "
+                print(f"[Mail] colour mismatch: {wrong} "
                       f"(expected {expected}) - fixed automatically on the next classify")
             else:
-                print("[Outlook] category colours: all correct")
+                print("[Mail] category colours: all correct")
     except Exception as ex:
-        print(f"[Outlook] connection failed: {ex}")
-        print("          Make sure Outlook classic (desktop) is installed and has been "
-              "started at least once; the new Outlook does not expose COM.")
+        print(f"[Mail] connection failed: {ex}")
+        if outlook.BACKEND == "outlook":
+            print("          Make sure Outlook classic (desktop) is installed and has been "
+                  "started at least once; the new Outlook does not expose COM.")
+        else:
+            print("          Check your network connection and the sign-in state; delete "
+                  "graph_token.json next to config.json to sign in again.")
         code = 1
 
     return code
@@ -137,13 +141,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="run.py",
-        description="AI email manager for Outlook classic (core, command line)",
+        description="AI email manager (core, command line)",
         epilog="Examples: py -3 run.py check --ai | py -3 run.py classify --days 7 --dry-run | "
                "py -3 run.py summarize sa",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_check = sub.add_parser("check", help="self-check: config / AI backend / Outlook (read-only)")
+    p_check = sub.add_parser("check", help="self-check: config / AI backend / mailbox (read-only)")
     p_check.add_argument("--ai", action="store_true",
                          help="also send a minimal request to verify the AI backend really works "
                               "(costs a tiny amount of credit)")
@@ -183,7 +187,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             scope = f"at most {args.limit} mail(s)"
         else:
             scope = "all unclassified mail"
-        print(f"Connecting to Outlook, reading {scope}"
+        print(f"Connecting to the mailbox, reading {scope}"
               + (" (dry run, no write-back)" if args.dry_run else "") + " ...")
         print(f"AI backend: {ai.describe(cfg.ai)}")
 

@@ -187,7 +187,7 @@ With the default `graph` backend the app signs in to Microsoft **once**:
 3. It also puts the device code **on the clipboard**, so pressing `Ctrl+V` on the sign-in page is enough.
 4. It waits for you (up to about **15 minutes**) and **continues by itself** once the sign-in finishes — no button to press.
 
-Afterwards the credential is cached in `graph_token.json` next to `config.json` and reused silently (refresh token, roughly 90 days, rolling renewal), so normal use never asks you to sign in again. Delete that file — or use the CLI `logout` helper if your build has it — to force a fresh sign-in.
+Afterwards the credential is cached in `graph_token.json` next to `config.json` and reused silently (refresh token, roughly 90 days, rolling renewal), so normal use never asks you to sign in again. Delete that file to sign out — the next launch asks you to sign in again.
 
 The permissions requested are **`Mail.ReadWrite`** (needed to write the S/A/B/C categories back to the mailbox), plus `offline_access openid profile User.Read`; the read-only self-check asks only for **`Mail.Read`**. If `graph.open_browser` is `false` the browser is not opened — the code still appears in the log for you to enter by hand.
 
@@ -540,7 +540,7 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 3. 它还会把设备码**放进剪贴板**，在登录页直接 `Ctrl+V` 就行。
 4. 之后它会等你（最长约 **15 分钟**），登录一完成就**自己继续**，不需要再点任何按钮。
 
-登录成功后凭据缓存在与 `config.json` 同目录的 `graph_token.json` 里，之后静默复用（refresh token，大约 90 天，滚动续期），日常使用不会再要求登录。删掉这个文件——或者用你所用版本里的命令行 `logout` 助手——就能强制重新登录。
+登录成功后凭据缓存在与 `config.json` 同目录的 `graph_token.json` 里，之后静默复用（refresh token，大约 90 天，滚动续期），日常使用不会再要求登录。删掉这个文件即等于退出登录——下次启动会重新要求登录一次。
 
 登录申请的权限是 **`Mail.ReadWrite`**（写回 S/A/B/C 分类必需），另外还有 `offline_access openid profile User.Read`；只读自检只申请 **`Mail.Read`**。若把 `graph.open_browser` 设为 `false`，浏览器不会自动弹出——设备码仍然会打进日志，手动输入即可。
 

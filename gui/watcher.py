@@ -286,7 +286,7 @@ class WatchController:
     # ── 后台线程：真正干活 ────────────────────────────────────
     def _work(self) -> Dict[str, Any]:
         cfg = self._get_cfg()
-        self._runner.set_phase("connecting to Outlook")
+        self._runner.set_phase("connecting to the mailbox")
         _app, ns = outlook.connect(log=self._log)
 
         # 先给"还没打 Sum 标签的总结报告"补标签。
@@ -361,7 +361,7 @@ class WatchController:
         should_stop = self._runner.should_stop
         self._runner.set_phase(f"waiting for the AI ({cfg.ai_active})")
         verdicts = classifier.classify(pending, cfg, log=self._log, should_stop=should_stop)
-        self._runner.set_phase("writing categories to Outlook")
+        self._runner.set_phase("writing categories")
         ok, failed, skipped = classifier.apply_verdicts(pending, verdicts, log=self._log,
                                                         should_stop=should_stop)
         self._remember_ignored(classifier.not_school_entryids(pending, verdicts))
@@ -467,7 +467,7 @@ class WatchController:
         self._runner.set_phase(f"waiting for the AI ({cfg.ai_active})")
         verdicts = classifier.classify(pending, cfg, log=self._log,
                                        should_stop=self._runner.should_stop)
-        self._runner.set_phase("writing categories to Outlook")
+        self._runner.set_phase("writing categories")
         ok, failed, skipped = classifier.apply_verdicts(pending, verdicts, log=self._log,
                                                         should_stop=self._runner.should_stop)
         self._remember_ignored(classifier.not_school_entryids(pending, verdicts))
@@ -494,7 +494,7 @@ class WatchController:
     def _on_done(self, result: Dict[str, Any]) -> None:
         self._errors = 0
         if self._outlook_warned:          # 之前提示过连不上，现在通了
-            self._log("[watch] Outlook is available now")
+            self._log("[watch] mailbox is reachable again")
         self._outlook_warned = False      # 下次断了再提示一次
         action = result.get("action")
 
@@ -563,7 +563,7 @@ class WatchController:
             delay = retry_delay_for(ex)
             if not self._outlook_warned:
                 self._outlook_warned = True
-                self._log(f"[watch] Outlook is not available yet - {ex}")
+                self._log(f"[watch] mailbox is not available yet - {ex}")
                 self._log(f"[watch] still watching; retrying every {delay}s")
             self._schedule(delay)
             return

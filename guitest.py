@@ -267,8 +267,10 @@ def main() -> int:
         pump(root, 1.6)                           # 看门狗每秒一次，要跨过它的 tick
         _text = app.log.contents()
         check("状态栏显示当前阶段", app.runner.phase.startswith("waiting for the AI"))
-        check("提示指向 AI 服务商，而不是让用户去折腾 Outlook",
-              "AI provider has not answered" in _text and "Outlook has not answered" not in _text)
+        check("提示指向 AI 服务商，而不是让用户去折腾邮箱",
+              "AI provider has not answered" in _text
+              and "Outlook has not answered" not in _text
+              and "mailbox has not answered" not in _text)
     finally:
         _mw.STUCK_HINT_SECONDS = _saved_hint
         app.runner.force_reset()
@@ -301,7 +303,7 @@ def main() -> int:
     check("仍然保持监听（不会自动暂停）", app.watcher.running is True)
     check("轮询链继续排下去", app.watcher._after_id is not None)
     pump(root, 0.4)
-    check("日志里给出了原因", "Outlook is not available yet" in app.log.contents())
+    check("日志里给出了原因", "mailbox is not available yet" in app.log.contents())
     check("并说明会继续重试", "still watching; retrying every" in app.log.contents())
     app.log.clear()
     app.watcher._on_error(OutlookNotRunning("outlook closed"))
