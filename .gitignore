@@ -1,8 +1,10 @@
-# 运行时生成的本地文件（含个人信息），不随代码分发
+# 运行时生成的本地文件（含个人信息/凭据），不随代码分发
 config.json
 watch_state.json
 config.json.tmp
 app.log
+graph_token.json
+graph_token.json.tmp
 
 # Python
 __pycache__/

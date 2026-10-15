@@ -16,7 +16,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Optional
 
-from core import ai, classifier, config, outlook, summarizer
+from core import ai, classifier, config, mail as outlook, summarizer
 
 from . import theme, watcher as watch_mod
 from .ai_settings_dialog import AiSettingsDialog
@@ -57,10 +57,12 @@ class MainWindow:
         self.log.write("Ready.")
         self.log.write(f"Config file: {config.config_path()}")
         self.log.write(f"Log file: {self.log.log_file() or '(disabled)'}")
+        self.log.write(f"[env] mail backend: {outlook.describe()}")
         level = outlook.integrity_level()
         self.log.write(f"[env] security context: {level} integrity")
         self.log.write(f"[env] launched by: {outlook.parent_process()}")
-        if level in ("Low", "Untrusted"):
+        # 这条提示只对 COM 后端有意义（Graph 不走本机 COM，不受完整性级别影响）
+        if outlook.BACKEND == "outlook" and level in ("Low", "Untrusted"):
             self.log.write("[env] WARNING: Outlook COM is blocked at this integrity level - "
                            "launch Email Manager normally (not from a sandboxed shell/agent)")
         self._report_problems()

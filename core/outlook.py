@@ -15,8 +15,12 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-import pythoncom  # noqa: F401  pywin32 运行时依赖，显式导入便于打包时被发现
-import win32com.client
+try:                       # pywin32 只有走 COM 后端时才需要。
+    import pythoncom    # noqa: F401  pywin32 运行时依赖，显式导入便于打包时被发现
+    import win32com.client
+except ImportError:        # 没装 pywin32 也能 import 本模块 —— Graph 后端要复用它里面
+    pythoncom = None       # 那些**纯逻辑**（分类约定、报告识别、sum 指令解析等）
+    win32com = None
 
 from .config import LEVELS
 

@@ -25,7 +25,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from core import ai, classifier, config, outlook, summarizer
+from core import ai, classifier, config, mail as outlook, summarizer
 
 
 def _setup_console() -> None:

@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from . import ai, outlook
+from . import ai, mail as outlook
 from .config import LEVELS, Config
 
 BODY_CHARS = 400  # 送进模型的正文截断长度（判级只需要依据，不需要全文）

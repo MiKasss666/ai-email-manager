@@ -128,6 +128,12 @@ def _as_list(value) -> List[str]:
     return out
 
 
+def _normalize_mail_source(value) -> str:
+    """邮件后端名归一：认不出来就回落默认（graph）。"""
+    text = _as_str(value, DEFAULT_MAIL_SOURCE).lower()
+    return text if text in MAIL_SOURCES else DEFAULT_MAIL_SOURCE
+
+
 def _normalize_language(value) -> str:
     """把语言值规范成 zh / en；识别不出来时回落到默认值。"""
     text = _as_str(value, DEFAULT_LANGUAGE).lower()
@@ -269,6 +275,50 @@ def ai_profile_to_dict(profile: AiProfile) -> dict:
     }
 
 
+# ── 邮件后端（Graph / Outlook COM）─────────────────────────────────
+DEFAULT_MAIL_SOURCE = "graph"          # 默认走 Microsoft Graph；旧行为是 "outlook"
+MAIL_SOURCES = ("graph", "outlook")
+
+# Graph 需要的委托权限：Mail.ReadWrite 才能写回 S/A/B/C 分类；只读自检用 probe_scopes
+DEFAULT_GRAPH_SCOPES = "offline_access openid profile User.Read Mail.ReadWrite"
+DEFAULT_GRAPH_PROBE_SCOPES = "offline_access openid profile User.Read Mail.Read"
+
+
+@dataclass
+class GraphConfig:
+    """Microsoft Graph 后端的设置（config.json 的 "graph" 段）。"""
+
+    tenant: str = "common"             # 换成本校域名（如 hkust.edu.hk）可让登录限定在自家租户
+    client_id: str = ""                # 留空则用微软自家公开客户端（仅适合自己用）
+    scopes: str = DEFAULT_GRAPH_SCOPES
+    probe_scopes: str = DEFAULT_GRAPH_PROBE_SCOPES
+    open_browser: bool = True          # 需要登录时自动打开浏览器
+    token_cache: str = "graph_token.json"   # 登录凭据缓存（相对 config.json 所在目录）
+
+
+def graph_from_dict(raw) -> GraphConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    return GraphConfig(
+        tenant=_as_str(raw.get("tenant"), "common"),
+        client_id=_as_str(raw.get("client_id")),
+        scopes=_as_str(raw.get("scopes"), DEFAULT_GRAPH_SCOPES),
+        probe_scopes=_as_str(raw.get("probe_scopes"), DEFAULT_GRAPH_PROBE_SCOPES),
+        open_browser=_as_bool(raw.get("open_browser"), True),
+        token_cache=_as_str(raw.get("token_cache"), "graph_token.json"),
+    )
+
+
+def graph_to_dict(gcfg: GraphConfig) -> dict:
+    return {
+        "tenant": gcfg.tenant,
+        "client_id": gcfg.client_id,
+        "scopes": gcfg.scopes,
+        "probe_scopes": gcfg.probe_scopes,
+        "open_browser": gcfg.open_browser,
+        "token_cache": gcfg.token_cache,
+    }
+
+
 # ── 主配置 ────────────────────────────────────────────────────────
 @dataclass
 class Config:
@@ -281,6 +331,10 @@ class Config:
     school: str = DEFAULT_SCHOOL    # 预填港科大；其他学校改这里
     faculty: str = ""               # 各人学院不同，留空由用户填
     courses: List[str] = field(default_factory=list)
+
+    # 邮件来源：graph（默认，不需要 Outlook）或 outlook（经典版 + COM）
+    mail_source: str = DEFAULT_MAIL_SOURCE
+    graph: GraphConfig = field(default_factory=GraphConfig)
 
     # 输出与总结
     language: str = DEFAULT_LANGUAGE     # zh / en —— 只影响总结报告的文案（界面固定英文）
@@ -414,6 +468,8 @@ def from_dict(raw: dict) -> Config:
         course_code_regex=_as_str(raw.get("course_code_regex"), DEFAULT_COURSE_CODE_RE),
         faculty_keywords=_as_list(raw.get("faculty_keywords")),
         school_domains=domains,
+        mail_source=_normalize_mail_source(raw.get("mail_source")),
+        graph=graph_from_dict(raw.get("graph")),
         ai_active=_as_str(ai_raw.get("active"), DEFAULT_AI_ACTIVE),
         ai_profiles=profiles,
     )
@@ -437,6 +493,8 @@ def to_dict(cfg: Config) -> dict:
         "course_code_regex": cfg.course_code_regex,
         "faculty_keywords": list(cfg.faculty_keywords),
         "school_domains": list(cfg.school_domains),
+        "mail_source": cfg.mail_source,
+        "graph": graph_to_dict(cfg.graph),
         "ai": {
             "active": cfg.ai_active,
             "profiles": {name: ai_profile_to_dict(profile)

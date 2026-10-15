@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Sequence
 
-from . import ai, outlook
+from . import ai, mail as outlook
 from .config import Config
 
 BODY_CHARS = 800  # 生成要点时的正文截断长度（要点要写出截止日期/课程代号等细节，给足上下文）

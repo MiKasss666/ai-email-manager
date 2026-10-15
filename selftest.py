@@ -9,7 +9,11 @@
 import os
 from datetime import date, datetime, timedelta
 
-from core import ai, classifier, config, outlook, summarizer
+# 自测固定走 COM 后端：这一套断言验证的是「纯逻辑 + COM 那条路的行为」，
+# 必须确定性，不能受 config.json 里 mail_source 的影响。Graph 后端的断言见文末 [15]。
+os.environ["EM_MAIL_SOURCE"] = "outlook"
+
+from core import ai, classifier, config, outlook, summarizer  # noqa: E402
 
 ok = 0
 
@@ -1027,6 +1031,126 @@ check("limit 只数通过过滤器的邮件",
       [m["entryid"] for m in outlook.read_inbox(_sns, limit=1, days=7,
                                                 keep=_keep, log=lambda *a: None)]
       == ["S-1"])
+
+print("[16] 邮件后端选择（graph / outlook）与 Graph 后端的纯逻辑")
+import core.graph as graph_mod                                 # noqa: E402
+import core.mail as mail_mod                                   # noqa: E402
+
+check("自测固定走 COM 后端（避免联网/登录）", mail_mod.BACKEND == "outlook")
+check("两个后端共用同一个「连不上」异常类（否则 watcher 的 isinstance 会失效）",
+      graph_mod.OutlookNotRunning is outlook.OutlookNotRunning)
+check("mail 暴露的端口名齐全",
+      all(hasattr(mail_mod, name) for name in
+          ("connect", "read_inbox", "collect_new_mail", "write_categories", "send_html",
+           "newest_message", "message_info", "read_recent", "pending_sum_commands",
+           "untagged_reports", "ensure_categories", "ensure_sum_category",
+           "existing_categories", "our_category_colors", "category_names",
+           "has_our_category", "parse_sum_command", "is_report", "integrity_level")))
+check("mail.describe() 说得清当前后端", "outlook" in mail_mod.describe())
+
+check("mail_source 默认是 graph", config.from_dict({}).mail_source == "graph")
+check("mail_source 认得出 outlook",
+      config.from_dict({"mail_source": "outlook"}).mail_source == "outlook")
+check("mail_source 写错时回落默认",
+      config.from_dict({"mail_source": "pop3"}).mail_source == "graph")
+check("graph 段有默认值",
+      config.from_dict({}).graph.tenant == "common"
+      and config.from_dict({}).graph.open_browser is True)
+check("graph 段可配置",
+      config.from_dict({"graph": {"tenant": "hkust.edu.hk",
+                                  "client_id": "abc"}}).graph.tenant == "hkust.edu.hk")
+check("to_dict/from_dict 往返保留 graph 设置",
+      config.from_dict(config.to_dict(
+          config.from_dict({"graph": {"client_id": "xyz"}}))).graph.client_id == "xyz")
+
+_raw = {
+    "id": "AAMkAGI2", "subject": "Homework 2", "receivedDateTime": "2026-10-15T02:04:33Z",
+    "categories": ["S"], "isRead": False,
+    "from": {"emailAddress": {"name": "Canvas", "address": "notifications@instructure.com"}},
+    "body": {"contentType": "html", "content": "<p>Due <b>soon</b></p><br><div>MATH1023</div>"},
+    "bodyPreview": "Due soon MATH1023",
+}
+_info = graph_mod.normalize(_raw)
+check("Graph 邮件归一：主题 / 发件人 / id / 分类",
+      _info["subject"] == "Homework 2"
+      and _info["sender"] == "notifications@instructure.com"
+      and _info["entryid"] == "AAMkAGI2" and _info["categories"] == ["S"])
+check("Graph 邮件归一：HTML 压成纯文本", "soon" in _info["body"] and "<" not in _info["body"])
+check("Graph 邮件归一：时间是本地 naive",
+      _info["received"] is not None and _info["received"].tzinfo is None)
+
+_str_body = dict(_raw)
+_str_body["body"] = "plain text body"
+_str_body["from"] = "someone@ust.hk"
+_info2 = graph_mod.normalize(_str_body)
+check("body 是字符串时不炸（真实邮箱里遇到过）", _info2["body"] == "plain text body")
+check("from 是字符串时也能取到地址", _info2["sender"] == "someone@ust.hk")
+check("几乎空的邮件也不炸", graph_mod.normalize({})["subject"] == "(no subject)")
+
+_gmsg = graph_mod.GraphMessage(_raw, client=None)
+check("GraphMessage 扮得像 COM MailItem（Subject/Categories/EntryID）",
+      _gmsg.Subject == "Homework 2" and _gmsg.Categories == "S"
+      and _gmsg.EntryID == "AAMkAGI2")
+check("core.outlook 的纯逻辑能直接用在 GraphMessage 上",
+      outlook.message_info(_gmsg)["sender"] == "notifications@instructure.com"
+      and outlook.category_names(_gmsg) == ["S"]
+      and outlook.has_our_category(_gmsg) is True
+      and outlook.is_report(_gmsg) is False)
+check("logged_in 只查本地凭据（不联网）", isinstance(graph_mod.logged_in(), bool))
+check("token 缓存默认放在 config.json 旁边",
+      os.path.basename(graph_mod.token_path(config.from_dict({}).graph)) == "graph_token.json")
+
+print("[17] Graph 登录交互：设备码进日志 + 自动打开浏览器（离线桩，不联网）")
+_saved_post = graph_mod._post_form
+_saved_open = graph_mod.webbrowser.open
+_saved_clip = graph_mod._copy_to_clipboard
+_logs: list = []
+_opened: list = []
+_clipped: list = []
+
+
+def _fake_post(url, fields):
+    if url.endswith("/devicecode"):
+        return 200, {"device_code": "DC", "user_code": "ABCD-1234",
+                     "verification_uri": "https://microsoft.com/devicelogin",
+                     "interval": 1, "expires_in": 30}
+    return 200, {"access_token": "AT", "refresh_token": "RT"}
+
+
+try:
+    graph_mod._post_form = _fake_post
+    graph_mod.webbrowser.open = lambda url: _opened.append(url)
+    graph_mod._copy_to_clipboard = lambda text: (_clipped.append(text), True)[1]
+    _tok = graph_mod._device_login(config.from_dict({}).graph, _logs.append, "Mail.Read")
+    _joined = "\n".join(_logs)
+    check("设备码出现在日志里（用户可复制）", "ABCD-1234" in _joined)
+    check("登录网址也在日志里", "microsoft.com/devicelogin" in _joined)
+    check("自动打开了浏览器", len(_opened) == 1 and _opened[0].startswith("https://"))
+    check("浏览器链接里带着设备码（免手输）", "ABCD-1234" in _opened[0])
+    check("设备码被放进剪贴板（可直接 Ctrl+V）", _clipped == ["ABCD-1234"])
+    check("登录成功后拿到 access_token", _tok.get("access_token") == "AT")
+
+    _opened.clear()
+    _logs.clear()
+    graph_mod._device_login(
+        config.from_dict({"graph": {"open_browser": False}}).graph, _logs.append, "Mail.Read")
+    check("open_browser=false 时不弹浏览器（但日志里照样给码）",
+          _opened == [] and "ABCD-1234" in "\n".join(_logs))
+
+    check("有 verification_uri_complete 时优先用它",
+          graph_mod._sign_in_url({"verification_uri": "https://a/device",
+                                  "verification_uri_complete": "https://a/device?otc=ZZZ"},
+                                 "CODE") == ("https://a/device?otc=ZZZ", True))
+    check("没有该字段时把设备码附在 user_code 参数上",
+          graph_mod._sign_in_url({"verification_uri": "https://a/device"}, "AB-12")
+          == ("https://a/device?user_code=AB-12", True))
+    check("连设备码都没有时只给基础网址",
+          graph_mod._sign_in_url({"verification_uri": "https://a/device"}, "")
+          == ("https://a/device", False))
+finally:
+    graph_mod._post_form = _saved_post
+    graph_mod.webbrowser.open = _saved_open
+    graph_mod._copy_to_clipboard = _saved_clip
 
 print(f"\n全部通过：{ok} 项")
 print("\n--- build_spec 实际产出（配置缺字段时的样子）---")

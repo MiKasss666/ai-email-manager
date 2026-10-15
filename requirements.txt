@@ -1,12 +1,22 @@
 # Third-party dependencies for this app.
 # 运行本程序所需的第三方库
 #
-# Only pywin32 is needed — it drives Outlook Classic through COM.
-# 只需要 pywin32（用于通过 COM 操作 Outlook 经典版）。
+# The default mail backend (Microsoft Graph) uses the Python standard library ONLY —
+# reading, classifying and writing categories back needs no third-party package.
+# 默认的邮件后端（Microsoft Graph）**只用 Python 标准库** ——
+# 读取、判级、写回分类都不需要任何第三方库。
 #
-# Install / 安装:
+# pywin32 is OPTIONAL: only the legacy Outlook backend needs it
+# (`"mail_source": "outlook"` in config.json, which drives Outlook Classic through COM).
+# pywin32 是**可选**的：只有回退到旧的 Outlook 后端时才需要
+# （config.json 里的 `"mail_source": "outlook"`，通过 COM 驱动 Outlook 经典版）。
+#
+# Install everything, including the optional fallback / 全部安装（含可选回退）:
 #     py -3 -m pip install -r requirements.txt
 #
-# Everything else is Python standard library (urllib / tkinter / json / re ...), no other deps.
-# 其余全部使用 Python 标准库（urllib / tkinter / json / re ...），没有别的依赖。
+# Graph backend only (nothing to install) / 只用 Graph 后端（无需安装任何东西）:
+#     py -3 app.py
+#
+# Everything else is Python standard library (urllib / json / webbrowser / tkinter / re ...).
+# 其余全部使用 Python 标准库（urllib / json / webbrowser / tkinter / re ...）。
 pywin32>=306

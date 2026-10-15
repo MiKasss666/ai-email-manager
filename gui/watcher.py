@@ -23,7 +23,7 @@ import os
 import tkinter as tk
 from typing import Any, Callable, Dict, Optional, Tuple
 
-from core import classifier, config, outlook, summarizer
+from core import classifier, config, mail as outlook, summarizer
 
 STATE_NAME = "watch_state.json"
 DEFAULT_INTERVAL = 30      # 秒

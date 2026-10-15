@@ -1,4 +1,4 @@
-# Email Manager · AI inbox assistant for Outlook Classic
+# Email Manager · AI inbox assistant for your Microsoft mailbox
 
 **Part 1 · English below ｜ Part 2 · 中文在下方（中文全文）**
 
@@ -16,9 +16,21 @@
 > That downloads the **source code** (29 files, ~435 KB, **no exe**, nothing happens when you double-click); it is only for developers who want to modify the code.
 > Regular users should use the **Download** link above, or grab `EmailManager.zip` (13 MB) from [Releases](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest).
 
-**Built for students at HKUST (Hong Kong University of Science and Technology)** — an AI assistant that sorts your Outlook inbox into S / A / B / C and emails you a summary report on demand. Course codes, school and dorm keywords ship pre-filled for HKUST; other schools only need a few config changes.
+**Built for students at HKUST (Hong Kong University of Science and Technology)** — an AI assistant that sorts your mailbox into S / A / B / C and emails you a summary report on demand. It talks to **Microsoft Graph** over HTTPS, so **desktop Outlook is not required**. Course codes, school and dorm keywords ship pre-filled for HKUST; other schools only need a few config changes.
 
-Four sections: **Prerequisites → Configuration → Classification logic → Usage**.
+Four sections: **Prerequisites → Configuration → Classification logic → Usage**, plus **Troubleshooting** at the end.
+
+---
+
+## What's new in v2.0.0
+
+- **The mail backend moved from Outlook COM to Microsoft Graph.** Desktop (Classic) Outlook is **no longer required at all** — the app works with Outlook not installed, not running and not signed in. Reads (inbox, bodies, categories, read state) and writes (the S/A/B/C categories, the red flag, the summary email) all go to the mailbox through the Graph REST API over HTTPS.
+- **The only new user step: a one-time Microsoft sign-in on first launch.** No stored credential → the app prints the device code in the **Activity log**, opens your default browser with the code already in the URL, and puts the code on the clipboard too. After that it is silent: the credential is cached in `graph_token.json` and renewed automatically.
+- **New config keys**: `mail_source` (`graph` default, or `outlook` for the legacy backend) and the `graph` section (`tenant`, `client_id`, `scopes`, `probe_scopes`, `open_browser`, `token_cache`). See [section 2](#2-configuration).
+- **`pywin32` is now optional.** The Graph path uses only the Python standard library; `pywin32` is needed only by the legacy Outlook backend.
+- **Sign-in asks for `Mail.ReadWrite`** (plus `offline_access openid profile User.Read`); the read-only self-check asks only for `Mail.Read`.
+
+The legacy Outlook Classic backend is still available as a fallback — see [Optional: legacy Outlook backend](#optional-legacy-outlook-backend).
 
 ---
 
@@ -29,8 +41,8 @@ Four sections: **Prerequisites → Configuration → Classification logic → Us
 | Option | What to do | For |
 |---|---|---|
 | **Download the build** | Grab `EmailManager.zip` from [Releases](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest), unzip, run `EmailManager.exe` | No Python needed |
-| **Build it yourself** | Clone → install Python + `pywin32` → double-click `build.bat` | You want to modify the code |
-| **Run from source** | Clone → install Python + `pywin32` → double-click `start.bat` | Quick iteration |
+| **Build it yourself** | Clone → install Python → double-click `build.bat` | You want to modify the code |
+| **Run from source** | Clone → install Python → double-click `start.bat` | Quick iteration |
 
 > The repository does **not** contain the build output (1025 binary files / 29 MB), so a fresh clone has no `EmailManager\` folder — either download it from Releases or run `build.bat` once (1–3 minutes).
 
@@ -39,18 +51,37 @@ Four sections: **Prerequisites → Configuration → Classification logic → Us
 | Item | Requirement |
 |---|---|
 | OS | Windows 10 / 11 |
-| **Outlook** | **Outlook Classic (desktop)**, signed in and able to send/receive mail. The app drives it through COM — Outlook on the web and the new Outlook are **not** supported. |
+| **Mail account** | A Microsoft / Microsoft 365 account you can sign in to. **Outlook does not have to be installed, running or signed in.** |
+| **Sign-in** | **One-time Microsoft sign-in on first launch** (OAuth2 device-code flow). You can sign out at any time by deleting the cached credential — see [Troubleshooting](#troubleshooting). |
 | **How to launch** | **Launch it as a normal user**: double-click it in File Explorer, or start it from the Start menu. |
 
-> ⚠️ **Do not launch this app from a sandboxed / proxied / restricted shell.**
-> Such a process gets a **Low integrity level**, and Windows does not allow a Low-integrity process to start or reach a Medium-integrity Outlook. The symptom: Outlook itself pops up "Cannot start Microsoft Outlook." and the log shows `com_error: (-2146959355, 'Server execution failed')`. The app writes its level to the log on startup (`[env] security context: ...`) — it must say `Medium`. Not sure? Run `check_context.bat`.
+### Mail backend
+
+| Backend | What it uses | Outlook needed? |
+|---|---|---|
+| **graph** (default) | Microsoft Graph REST API over HTTPS, Python standard library only | **No** — not installed, not running, not signed in |
+| outlook (legacy) | Outlook Classic driven through COM (`pywin32`) | Yes |
+
+Switch with `mail_source` in `config.json`; the Graph section is described in [section 2](#2-configuration).
 
 ### How to run (pick one)
 
 | Option | Entry point | Requirements |
 |---|---|---|
 | **Packaged build** | `EmailManager\EmailManager.exe` | Nothing to install. SmartScreen blocks it once on first run: click `More info` → `Run anyway`. |
-| **From source** | `start.bat` | Python 3.9+ and pywin32 (`py -3 -m pip install -r requirements.txt`). **No SmartScreen prompt.** |
+| **From source** | `start.bat` | Python 3.9+ (`py -3 -m pip install -r requirements.txt` installs the optional `pywin32`, which only the legacy Outlook backend needs). **No SmartScreen prompt.** |
+
+### Optional: legacy Outlook backend
+
+A legacy backend that drives **Outlook Classic (desktop)** through COM is still shipped, for anyone who wants the old behaviour (no Microsoft sign-in at all).
+
+| Step | What to do |
+|---|---|
+| 1 | Install the optional dependency: `py -3 -m pip install pywin32` |
+| 2 | Make sure Outlook Classic (desktop) is installed, signed in and able to send/receive mail — Outlook on the web and the new Outlook are **not** supported on this path |
+| 3 | Set `"mail_source": "outlook"` in `config.json` and restart the app |
+
+> ⚠️ This path talks to a local COM server, so do not launch the app from a sandboxed / restricted shell there: a **Low**-integrity process cannot reach a Medium-integrity Outlook, and the log then shows `com_error: (-2146959355, 'Server execution failed')`. `check_context.bat` prints the integrity level of the current window, the exe's label and whether Outlook is running.
 
 ### AI backends (one must be usable)
 
@@ -72,7 +103,11 @@ Model names change over time — always check your provider's docs.
 
 - **The classification prompt is currently Chinese-only.** The rules sent to the model are written in Chinese (the GUI and docs are English; this one piece is not). Classification was verified on mixed Chinese/English mail, but whether it is optimal for an all-English mailbox is **not yet verified**.
 
-- **Windows + Outlook Classic only.** Outlook on the web, the new Outlook, macOS and Linux are all unsupported (the app drives Outlook through the COM interface).
+- **The legacy Outlook backend is Windows + Outlook Classic only.** Outlook on the web, the new Outlook, macOS and Linux are not supported on that path (it drives Outlook through COM). The Graph backend is not tied to desktop Outlook, but the app itself is still a Windows/Tkinter program.
+
+- **A network connection is required.** The Graph backend reaches your mailbox over HTTPS; the legacy Outlook backend talked to a local Outlook instead and could work offline.
+
+- **How much the app may do is decided by your Microsoft 365 tenant.** If the organisation requires administrator approval for new apps (or blocks them), sign-in will be refused — ask your IT department, or fall back to the legacy Outlook backend.
 
 ---
 
@@ -89,6 +124,8 @@ Model names change over time — always check your provider's docs.
 
 - **In the GUI (recommended)**: `User info` for your identity, `AI setting` for the backend and key
 - Edit `config.json` directly (reopen the app to pick it up)
+
+`mail_source` and the `graph` section have no GUI control yet, so **edit `config.json` for those**. The credential cache `graph_token.json` (see below) is written next to it after the first sign-in; both are personal data and are already in `.gitignore`.
 
 ### Identity fields
 
@@ -109,6 +146,13 @@ Model names change over time — always check your provider's docs.
 
 | Field | Purpose | Default |
 |---|---|---|
+| `mail_source` | Which mail backend: `graph` (Microsoft Graph, no Outlook needed) or `outlook` (legacy Outlook Classic + COM). No GUI control — edit the file and reopen the app. | `graph` |
+| `graph.tenant` | Which Microsoft tenant sign-in is restricted to. `common` accepts any account; set your school's domain (e.g. `hkust.edu.hk`) to refuse accounts from outside it. | `common` |
+| `graph.client_id` | Microsoft Entra app id. Empty = use Microsoft's own public client, which is fine for personal use; register your own app at [entra.microsoft.com](https://entra.microsoft.com) to distribute to others. | empty |
+| `graph.scopes` | Permissions requested when signing in to read **and write** mail. | `offline_access openid profile User.Read Mail.ReadWrite` |
+| `graph.probe_scopes` | Read-only permissions used by the self-check. | `offline_access openid profile User.Read Mail.Read` |
+| `graph.open_browser` | Open the default browser automatically when a sign-in is needed. `false` = no window opens, the code still appears in the log. | `true` |
+| `graph.token_cache` | Where the sign-in credential is cached, relative to `config.json`. Delete it to force a fresh sign-in. | `graph_token.json` |
 | `language` | `zh` / `en`. **Affects only the summary report and its subject** (the GUI stays English). | `en` |
 | `summary_recipient` | Where the summary goes; empty = send to yourself. | empty |
 | `summary_days` | How many days the summary covers. | `7` |
@@ -133,6 +177,19 @@ The `api_key` in the config wins; when it is empty the environment variable is u
 | anthropic | `ANTHROPIC_API_KEY` |
 
 Leave `api_key` empty to use the env var, so the key never lands in a file.
+
+### Signing in to the mailbox
+
+With the default `graph` backend the app signs in to Microsoft **once**:
+
+1. When no stored credential exists it prints the **device code on its own line in the Activity log** (the log panel has a `Copy` button).
+2. It **opens your default browser** automatically. The URL it opens already carries the code (`...?user_code=XXXX`), so on the sign-in page you usually just confirm.
+3. It also puts the device code **on the clipboard**, so pressing `Ctrl+V` on the sign-in page is enough.
+4. It waits for you (up to about **15 minutes**) and **continues by itself** once the sign-in finishes — no button to press.
+
+Afterwards the credential is cached in `graph_token.json` next to `config.json` and reused silently (refresh token, roughly 90 days, rolling renewal), so normal use never asks you to sign in again. Delete that file — or use the CLI `logout` helper if your build has it — to force a fresh sign-in.
+
+The permissions requested are **`Mail.ReadWrite`** (needed to write the S/A/B/C categories back to the mailbox), plus `offline_access openid profile User.Read`; the read-only self-check asks only for **`Mail.Read`**. If `graph.open_browser` is `false` the browser is not opened — the code still appears in the log for you to enter by hand.
 
 ---
 
@@ -189,7 +246,7 @@ step4  everything else → C
 | Every N seconds (30 by default) | Only mail newer than the last-seen message is classified |
 | New mail is a `sum` command | Tag `Sum` → generate and send the summary |
 | Our own reports | Each tick scans for reports missing the `Sum` tag and fixes them (including historical ones) |
-| Outlook unavailable | **Not treated as a failure**: one notice, then retry with a 120-second backoff and reconnect automatically |
+| Mailbox temporarily unreachable | **Not treated as a failure**: one notice, then retry with a 120-second backoff and reconnect automatically (this covers both a Graph connection problem and the legacy backend finding Outlook unavailable) |
 
 ---
 
@@ -218,14 +275,15 @@ The app is **single-instance**: a second launch tells you it is already running 
 ### First-run in four steps
 
 1. Open the app → **User info** → fill in `email` (plus `student_id`, `faculty`, `courses` if you can) → **Save**
-2. **AI setting** → pick a backend → enter the API key → save
-3. The watcher **starts by itself** once the config is complete (the log shows `watching the inbox every 30s`)
-4. To preview first: tick **Dry run** → click **Categorize**; untick it once the levels look right
+2. The **one-time Microsoft sign-in** may appear on first use (with the Graph backend): follow it in the browser once — see [Signing in to the mailbox](#signing-in-to-the-mailbox)
+3. **AI setting** → pick a backend → enter the API key → save
+4. The watcher **starts by itself** once the config is complete (the log shows `watching the inbox every 30s`)
+5. To preview first: tick **Dry run** → click **Categorize**; untick it once the levels look right
 
 ### Command line
 
 ```powershell
-py -3 run.py check [--ai]         # self-check: config / Outlook / category colours (--ai sends one tiny request)
+py -3 run.py check [--ai]         # self-check: config / mail access / category colours (--ai sends one tiny request)
 py -3 run.py providers            # list backends and their status
 py -3 run.py classify [--limit N] [--days N] [--dry-run] [--force]
 py -3 run.py summarize [letters]  # build and send the summary; letters like s / sa / sabc
@@ -238,13 +296,24 @@ Exit codes: `0` success, `1` config or connection problem, `2` partial failure.
 | File / folder | Description |
 |---|---|
 | `EmailManager\` | Build output (**not in the repo**): download from Releases or run `build.bat`. Ship the whole folder. |
-| `start.bat` | Run from source (needs Python + pywin32 locally; no SmartScreen prompt) |
-| `build.bat` | Rebuild the distributable folder; the last step clears Low integrity labels and prints the result |
-| `check_context.bat` | Diagnostic: prints this window's integrity level, the exe's label and whether Outlook is running |
+| `start.bat` | Run from source (needs Python locally, plus `pywin32` only for the legacy backend; no SmartScreen prompt) |
+| `build.bat` | Rebuild the distributable folder; the last step clears Low integrity labels (which matter for the legacy COM backend) and prints the result |
+| `check_context.bat` | Diagnostic for the legacy COM backend: prints this window's integrity level, the exe's label and whether Outlook is running |
 | `run.py` | Command-line entry point |
-| `core/` `gui/` | Source (layered: `config ← (ai, outlook) ← (classifier, summarizer) ← gui`) |
-| `selftest.py` `guitest.py` | Tests: `py -3 selftest.py` (pure logic, no Outlook/AI); `py -3 guitest.py` (GUI smoke test) |
-| `config.json` / `watch_state.json` / `app.log` | **Created at runtime, contains your personal data — never redistribute** (already in `.gitignore`) |
+| `core/` `gui/` | Source (layered: `config ← (ai, mail) ← (classifier, summarizer) ← gui`; `core/mail.py` picks the mail backend, implemented by `core/graph.py` or `core/outlook.py`) |
+| `selftest.py` `guitest.py` | Tests: `py -3 selftest.py` (pure logic, no mailbox/AI); `py -3 guitest.py` (GUI smoke test) |
+| `config.json` / `graph_token.json` / `watch_state.json` / `app.log` | **Created at runtime, contains your personal data — never redistribute** (already in `.gitignore`). `graph_token.json` holds the cached Microsoft sign-in credential. |
+
+---
+
+## Troubleshooting
+
+| Symptom | What it means / what to do |
+|---|---|
+| The sign-in page says the app **needs administrator approval** | Your school's Microsoft 365 tenant does not let users consent to new apps. Ask your IT department, or set `"mail_source": "outlook"` in `config.json` and use the legacy Outlook backend. |
+| The **device code expired** | The code is valid for about **15 minutes**. Restart the app to get a fresh code, then finish the sign-in without waiting. |
+| Sign-in worked but **mail cannot be read** | Check your network connection: the Graph backend needs internet access, unlike the old local COM path. |
+| You want to sign in **again / as another account** | Delete `graph_token.json` (next to `config.json`) to force a fresh sign-in. |
 
 ---
 
@@ -298,9 +367,21 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 > 那个下载的是**源码**（29 个文件 / 约 435 KB，里面**没有 exe**，双击没反应），只有想改代码的开发者才需要。
 > 普通用户请用上面那个 **Download** 链接，或到 [Releases](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest) 页面下载 `EmailManager.zip`（13 MB）。
 
-**为香港科技大学（HKUST）学生开发** —— 用 AI 把收件箱自动分成 S / A / B / C 四级，并按需生成一份总结报告发给自己。课程代号、学院、宿舍关键词等默认值都按 HKUST 预置，换成别的学校只需在配置里改几个字段。
+**为香港科技大学（HKUST）学生开发** —— 用 AI 把收件箱自动分成 S / A / B / C 四级，并按需生成一份总结报告发给自己。程序通过 HTTPS 直接对接 **Microsoft Graph**，所以**不需要安装桌面版 Outlook**。课程代号、学院、宿舍关键词等默认值都按 HKUST 预置，换成别的学校只需在配置里改几个字段。
 
-本文四节：**前置要求 → 环境配置 → 运行分类逻辑 → 使用方法**。
+本文四节：**前置要求 → 环境配置 → 运行分类逻辑 → 使用方法**，最后另加一节**故障排查**。
+
+---
+
+## 版本更新 · v2.0.0
+
+- **邮件后端从 Outlook COM 换成 Microsoft Graph。** **不再需要**桌面版（经典版）Outlook——没装、没开、没登录都能用。读取（收件箱、正文、分类、已读状态）与写入（写回 S/A/B/C 分类、红旗、发送总结邮件）全部通过 HTTPS 调用 Graph REST API 完成。
+- **用户唯一新增的步骤：首次启动时登录一次 Microsoft 账号。** 本地没有凭据时，程序会把**设备码打到 Activity log**、自动打开默认浏览器（网址里已带上设备码），并把设备码放进剪贴板。之后就无感了：凭据缓存在 `graph_token.json`，会自动续期。
+- **新增配置项**：`mail_source`（默认 `graph`，可设为 `outlook` 走旧后端）与 `graph` 段（`tenant`、`client_id`、`scopes`、`probe_scopes`、`open_browser`、`token_cache`）。详见 [第 2 节](#2-环境配置)。
+- **`pywin32` 变成可选依赖。** Graph 后端只用 Python 标准库；只有旧的 Outlook 后端才需要 `pywin32`。
+- **登录时申请的权限是 `Mail.ReadWrite`**（另外还有 `offline_access openid profile User.Read`）；只读自检只申请 `Mail.Read`。
+
+旧的 Outlook 经典版后端仍保留为回退方案：见[可选：旧版 Outlook 后端](#可选旧版-outlook-后端)。
 
 ---
 
@@ -311,8 +392,8 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 | 方式 | 怎么做 | 适合 |
 |---|---|---|
 | **下载打包版** | 到 [Releases](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest) 下载 `EmailManager.zip`，解压后运行里面的 `EmailManager.exe` | 不想装 Python 的人 |
-| **自己打包** | 克隆仓库 → 装好 Python + `pywin32` → 双击 `build.bat` | 想改代码的人 |
-| **直接跑源码** | 克隆仓库 → 装好 Python + `pywin32` → 双击 `start.bat` | 改完立刻试 |
+| **自己打包** | 克隆仓库 → 装好 Python → 双击 `build.bat` | 想改代码的人 |
+| **直接跑源码** | 克隆仓库 → 装好 Python → 双击 `start.bat` | 改完立刻试 |
 
 > 仓库里**不含**打包产物（1025 个文件 / 29 MB 的二进制），所以克隆下来没有 `EmailManager\` —— 要么从 Releases 下载，要么自己跑一次 `build.bat`（约 1–3 分钟）。
 
@@ -321,18 +402,37 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 | 项 | 要求 |
 |---|---|
 | 操作系统 | Windows 10 / 11 |
-| **Outlook** | **Outlook 经典版（桌面版）**，已登录、能正常收发邮件。程序通过 COM 接口直接操作它——网页版、新版 Outlook 不支持。 |
+| **邮箱账号** | 一个你能登录的 Microsoft / Microsoft 365 账号。**Outlook 不需要安装、不需要运行、也不需要登录。** |
+| **登录** | **首次启动时登录一次 Microsoft 账号**（OAuth2 设备码流程）。随时可以退出登录：删掉缓存的凭据即可，见[故障排查](#故障排查)。 |
 | **启动方式** | **必须以普通用户身份启动**：在文件资源管理器里双击，或从开始菜单启动。 |
 
-> ⚠️ **不要从被沙箱 / 代理 / 受限 shell 里启动本程序。**
-> 那样启动的进程会带上 **Low 完整性级别**，而 Windows 不允许 Low 完整性进程启动或连接 Medium 完整性的 Outlook。症状是 Outlook 自己弹出 "Cannot start Microsoft Outlook."，程序日志报 `com_error: (-2146959355, 'Server execution failed')`。程序启动时会把当前级别写进日志（`[env] security context: ...`），是 `Medium` 才正常；拿不准就跑一次 `check_context.bat`。
+### 邮件后端
+
+| 后端 | 用什么 | 需要 Outlook 吗 |
+|---|---|---|
+| **graph**（默认） | 通过 HTTPS 调用 Microsoft Graph REST API，只用 Python 标准库 | **不需要**——没装、没开、没登录都行 |
+| outlook（旧版） | 通过 COM 驱动 Outlook 经典版（需要 `pywin32`） | 需要 |
+
+在 `config.json` 里用 `mail_source` 切换；`graph` 段各字段见[第 2 节](#2-环境配置)。
 
 ### 运行方式（二选一）
 
 | 方式 | 入口 | 需要装什么 |
 |---|---|---|
 | **打包版** | `EmailManager\EmailManager.exe` | 什么都不用装。首次运行会被 SmartScreen 拦一下：点 `More info` → `Run anyway`。 |
-| **源码运行** | `start.bat` | Python 3.9+ 与 pywin32（`py -3 -m pip install -r requirements.txt`）。**没有 SmartScreen 提示**。 |
+| **源码运行** | `start.bat` | Python 3.9+（`py -3 -m pip install -r requirements.txt` 会装上可选的 `pywin32`，只有旧版 Outlook 后端才用得到）。**没有 SmartScreen 提示**。 |
+
+### 可选：旧版 Outlook 后端
+
+程序仍保留一个通过 COM 驱动 **Outlook 经典版（桌面版）** 的旧后端，想用回旧行为（完全不需要登录 Microsoft）的人可以用它。
+
+| 步骤 | 怎么做 |
+|---|---|
+| 1 | 装可选依赖：`py -3 -m pip install pywin32` |
+| 2 | 确保 Outlook 经典版（桌面版）已安装、已登录且能正常收发邮件——这条路径**不支持**网页版 Outlook 和新版 Outlook |
+| 3 | 在 `config.json` 里设 `"mail_source": "outlook"`，然后重启程序 |
+
+> ⚠️ 这条路径要连本机的 COM 服务，所以不要从被沙箱 / 受限的 shell 里启动程序：**Low** 完整性进程连不上 Medium 完整性的 Outlook，日志里会出现 `com_error: (-2146959355, 'Server execution failed')`。`check_context.bat` 会打印当前窗口的完整性级别、exe 的标签以及 Outlook 是否在运行。
 
 ### AI 后端（必须有一个可用）
 
