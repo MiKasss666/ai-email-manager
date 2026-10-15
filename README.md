@@ -272,7 +272,7 @@ The log is also written to `app.log` (next to `config.json`) with `HH:MM:SS` tim
 
 The app is **single-instance**: a second launch tells you it is already running and exits. Two copies would each run their own watcher and write categories to the same mailbox at the same time.
 
-### First-run in four steps
+### First run in five steps
 
 1. Open the app → **User info** → fill in `email` (plus `student_id`, `faculty`, `courses` if you can) → **Save**
 2. The **one-time Microsoft sign-in** may appear on first use (with the Graph backend): follow it in the browser once — see [Signing in to the mailbox](#signing-in-to-the-mailbox)
@@ -356,6 +356,8 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 ---
 
 # Part 2 · 中文
+
+# Email Manager · AI 邮件管理助手
 
 ## ⬇️ 只是想用？点这里下载
 
@@ -454,7 +456,11 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 
 - **分类提示词目前固定为中文。** 送给模型的规则文本是中文的（界面和文档都是英文，只有这段提示词不是）。中英文邮件都实测能正常判级，但纯英文环境下是否最优**尚未验证**。
 
-- **仅支持 Windows + Outlook 经典版。** 网页版 Outlook、新版 Outlook、macOS、Linux 都不支持（程序通过 COM 接口操作 Outlook）。
+- **仅支持 Windows。** 程序本身是 Windows 上的 Python/Tkinter 程序；旧版 Outlook 后端另外还要求 Outlook 经典版（它通过 COM 操作 Outlook，网页版、新版 Outlook、macOS、Linux 在这条路径上都不支持）。默认的 Graph 后端不依赖桌面版 Outlook。
+
+- **必须能联网。** Graph 后端通过 HTTPS 访问你的邮箱；旧版 Outlook 后端连的是本机 Outlook，离线也能工作。
+
+- **程序能做什么，取决于你所在组织的 Microsoft 365 租户设置。** 如果学校要求第三方应用必须由管理员批准（或直接禁用），登录会被拒绝——可以找 IT 处理，或改回旧版 Outlook 后端。
 
 ---
 
@@ -471,6 +477,8 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 
 - **界面里填（推荐）**：`User info` 填身份，`AI setting` 选后端填 Key
 - 直接编辑 `config.json`（保存后重新打开界面即可生效）
+
+`mail_source` 与 `graph` 段目前**没有界面入口**，只能**直接编辑 `config.json`**。首次登录后程序会在同目录生成凭据缓存 `graph_token.json`（见下文）；两者都是个人信息，且都已写进 `.gitignore`。
 
 ### 身份字段
 
@@ -491,6 +499,13 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 
 | 字段 | 作用 | 默认值 |
 |---|---|---|
+| `mail_source` | 用哪个邮件后端：`graph`（Microsoft Graph，不需要 Outlook）或 `outlook`（旧的 Outlook 经典版 + COM）。没有界面入口——改完文件重开程序生效。 | `graph` |
+| `graph.tenant` | 登录限定在哪个 Microsoft 租户。`common` 接受任何账号；填本校域名（如 `hkust.edu.hk`）可拒绝校外账号登录。 | `common` |
+| `graph.client_id` | Microsoft Entra 应用 id。留空 = 用微软自家公开客户端，自己用没问题；要分发给别人请到 [entra.microsoft.com](https://entra.microsoft.com) 注册自己的应用。 | 空 |
+| `graph.scopes` | 登录时申请、用于读**并写**邮件的权限。 | `offline_access openid profile User.Read Mail.ReadWrite` |
+| `graph.probe_scopes` | 自检用的只读权限。 | `offline_access openid profile User.Read Mail.Read` |
+| `graph.open_browser` | 需要登录时自动打开默认浏览器。`false` = 不弹浏览器，设备码仍然会打进日志。 | `true` |
+| `graph.token_cache` | 登录凭据缓存的文件名（相对 `config.json` 所在目录）。删掉它 = 强制重新登录。 | `graph_token.json` |
 | `language` | `zh` / `en`。**只影响总结报告和邮件主题的语言**（界面固定英文）。 | `en` |
 | `summary_recipient` | 总结报告发给谁；留空 = 发给自己。 | 空 |
 | `summary_days` | 总结覆盖最近多少天。 | `7` |
@@ -515,6 +530,19 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 | anthropic | `ANTHROPIC_API_KEY` |
 
 想用环境变量方式，把配置里的 `api_key` 留空即可（这样 Key 不落在文件里）。
+
+### 登录邮箱
+
+用默认的 `graph` 后端时，程序只需要登录**一次**：
+
+1. 本地没有凭据时，程序会把**设备码单独一行打进 Activity log**（日志区右上角有 `Copy` 按钮）。
+2. 它会**自动打开默认浏览器**，打开的网址里已经带着设备码（`...?user_code=XXXX`），所以在登录页上通常只要确认一下。
+3. 它还会把设备码**放进剪贴板**，在登录页直接 `Ctrl+V` 就行。
+4. 之后它会等你（最长约 **15 分钟**），登录一完成就**自己继续**，不需要再点任何按钮。
+
+登录成功后凭据缓存在与 `config.json` 同目录的 `graph_token.json` 里，之后静默复用（refresh token，大约 90 天，滚动续期），日常使用不会再要求登录。删掉这个文件——或者用你所用版本里的命令行 `logout` 助手——就能强制重新登录。
+
+登录申请的权限是 **`Mail.ReadWrite`**（写回 S/A/B/C 分类必需），另外还有 `offline_access openid profile User.Read`；只读自检只申请 **`Mail.Read`**。若把 `graph.open_browser` 设为 `false`，浏览器不会自动弹出——设备码仍然会打进日志，手动输入即可。
 
 ---
 
@@ -571,7 +599,7 @@ step4  其余                                      → C
 | 每 N 秒（默认 30） | 只处理"比上次记住的那封更新"的邮件 → 分级 |
 | 新邮件是 `sum` 指令 | 打 `Sum` 标签 → 生成总结报告 |
 | 我们自己的报告 | 每轮扫描"是报告但没打 `Sum` 标签"的并补上（历史遗漏也会补） |
-| Outlook 不可用 | **不当作失败**：只提示一次、继续按 120 秒退避重试，一恢复就自动接上 |
+| 邮箱暂时连不上 | **不当作失败**：只提示一次、继续按 120 秒退避重试，一恢复就自动接上（Graph 连不上、旧后端连不上 Outlook，都走这条） |
 
 ---
 
@@ -597,17 +625,18 @@ step4  其余                                      → C
 
 程序是**单实例**的：第二次启动会提示"已经在运行"并直接退出。两个实例会各自开一份监听、同时给同一个邮箱写分类（标签互相覆盖），所以必须挡住。
 
-### 首次使用四步
+### 首次使用五步
 
 1. 打开程序 → **User info** 填 `email`（建议把 `student_id`、`faculty`、`courses` 一起填上）→ **Save**
-2. **AI setting** 选后端 → 填 API Key → 保存
-3. 配置齐全后**监听会自动开启**（日志出现 `watching the inbox every 30s`）
-4. 想先看效果：勾 **Dry run** → 点 **Categorize**，确认判级合理后取消 Dry run 再正式跑
+2. 用 Graph 后端时，首次使用可能会弹出**一次性的 Microsoft 登录**：跟着浏览器完成一次即可，见[登录邮箱](#登录邮箱)
+3. **AI setting** 选后端 → 填 API Key → 保存
+4. 配置齐全后**监听会自动开启**（日志出现 `watching the inbox every 30s`）
+5. 想先看效果：勾 **Dry run** → 点 **Categorize**，确认判级合理后取消 Dry run 再正式跑
 
 ### 命令行
 
 ```powershell
-py -3 run.py check [--ai]         # 自检：配置 / Outlook 连接 / 分类颜色（--ai 会发一次极小请求）
+py -3 run.py check [--ai]         # 自检：配置 / 邮箱访问 / 分类颜色（--ai 会发一次极小请求）
 py -3 run.py providers            # 列出所有 AI 后端及可用状态
 py -3 run.py classify [--limit N] [--days N] [--dry-run] [--force]
 py -3 run.py summarize [letters]  # 生成并发送总结报告；letters 如 s / sa / sabc
@@ -620,13 +649,24 @@ py -3 run.py summarize [letters]  # 生成并发送总结报告；letters 如 s 
 | 文件 / 目录 | 说明 |
 |---|---|
 | `EmailManager\` | 打包产物（**不在仓库里**）：从 Releases 下载，或自己跑 `build.bat` 生成。分发时带上整个文件夹。 |
-| `start.bat` | 从源码启动（需本机有 Python + pywin32，无 SmartScreen 提示） |
-| `build.bat` | 重新打包成可分发文件夹；最后一步会自动清除产物上的 Low 完整性标签并打印结果 |
-| `check_context.bat` | 诊断脚本：打印当前窗口的完整性级别、exe 的标签、Outlook 状态 |
+| `start.bat` | 从源码启动（需本机有 Python；`pywin32` 只有旧版后端才需要，无 SmartScreen 提示） |
+| `build.bat` | 重新打包成可分发文件夹；最后一步会自动清除产物上的 Low 完整性标签（对旧的 COM 后端才有影响）并打印结果 |
+| `check_context.bat` | 旧 COM 后端的诊断脚本：打印当前窗口的完整性级别、exe 的标签、Outlook 是否在运行 |
 | `run.py` | 命令行入口 |
-| `core/` `gui/` | 源码（分层：`config ← (ai, outlook) ← (classifier, summarizer) ← gui`） |
-| `selftest.py` `guitest.py` | 测试：`py -3 selftest.py` 纯逻辑自测（不连 Outlook、不调 AI）；`py -3 guitest.py` 界面冒烟 |
-| `config.json` / `watch_state.json` / `app.log` | **运行时生成，含你的个人信息，不要一起分发**（已在 `.gitignore` 里排除） |
+| `core/` `gui/` | 源码（分层：`config ← (ai, mail) ← (classifier, summarizer) ← gui`；邮件后端由 `core/mail.py` 选择，实现在 `core/graph.py` 或 `core/outlook.py`） |
+| `selftest.py` `guitest.py` | 测试：`py -3 selftest.py` 纯逻辑自测（不连邮箱、不调 AI）；`py -3 guitest.py` 界面冒烟 |
+| `config.json` / `graph_token.json` / `watch_state.json` / `app.log` | **运行时生成，含你的个人信息，不要一起分发**（已在 `.gitignore` 里排除）。`graph_token.json` 里是登录 Microsoft 的凭据缓存。 |
+
+---
+
+## 故障排查
+
+| 现象 | 原因 / 怎么办 |
+|---|---|
+| 登录页提示**需要管理员批准** | 你所在学校的 Microsoft 365 租户不允许用户自行同意新应用。找 IT 处理，或在 `config.json` 里设 `"mail_source": "outlook"` 改用旧版 Outlook 后端。 |
+| **设备码过期** | 设备码有效期约 **15 分钟**。重启程序拿一个新码，然后尽快完成登录。 |
+| 登录成功了但**读不到邮件** | 检查网络：Graph 后端需要联网，这一点和旧的本地 COM 路径不同。 |
+| 想**换账号 / 重新登录** | 删掉 `graph_token.json`（与 `config.json` 同目录）即可强制重新登录。 |
 
 ---
 
