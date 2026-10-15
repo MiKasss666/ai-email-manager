@@ -152,7 +152,10 @@ spec = classifier.build_spec(cfg)
 check("spec 含课程", "COMP1021" in spec)
 check("spec 含学院", "School of Engineering" in spec)
 check("spec 含宿舍关键词（港科大默认值）", "UGHousing" in spec)
-check("spec 含加急天数", "30 天内 deadline" in spec)
+check("spec 含加急天数（且出现在「截止」语境里，不是死开关）",
+      f"{cfg.urgent_days} 天内" in spec and "截止" in spec)
+check("spec 明确「活动举办日期不算截止」", "活动举办日期不算截止" in spec)
+check("spec 明确过期通知的归属", "已过期" in spec)
 check("spec 含「学校邮件」判定步骤", "学校邮件" in spec)
 check("spec 用学校域名做确定性判据", cfg.school_domains[0] in spec)
 check("spec 不再用学校名当判级条件", "香港科技大学" not in spec)
@@ -392,12 +395,15 @@ emails = [
 verdicts = classifier.to_verdicts([{"级别": "C", "截止日期": None},
                                    {"级别": "B", "截止日期": None}], 2, cfg)
 check("确定性规则改写封数 = 1", classifier.apply_enrolled_override(emails, verdicts, cfg) == 1)
-check("课程邮件被强制 S", verdicts[0].level == "S")
+check("课程邮件被抬到至少 A（不再一律顶成 S）", verdicts[0].level == "A")
 check("无关邮件不受影响", verdicts[1].level == "B")
-check("counts 统计", classifier.counts(verdicts) == {"S": 1, "A": 0, "B": 1, "C": 0})
-check("counts 容忍 None", classifier.counts([None, verdicts[0]])["S"] == 1)
+check("counts 统计", classifier.counts(verdicts) == {"S": 0, "A": 1, "B": 1, "C": 0})
+check("counts 容忍 None", classifier.counts([None, verdicts[0]])["A"] == 1)
 check("无课程时不误伤", classifier.apply_enrolled_override(
     emails, verdicts, config.from_dict({"email": "a@b.c"})) == 0)
+_s_verdict = classifier.to_verdicts([{"级别": "S", "截止日期": "2026-10-20"}], 1, cfg)
+classifier.apply_enrolled_override(emails[:1], _s_verdict, cfg)
+check("AI 已经判 S 的课程邮件不被降级", _s_verdict[0].level == "S")
 
 print("[4] summarizer")
 check("parse_letters 归一排序", summarizer.parse_letters("BA") == "ab"
@@ -1190,6 +1196,106 @@ finally:
     graph_mod._post_form = _saved_post
     graph_mod.webbrowser.open = _saved_open
     graph_mod._copy_to_clipboard = _saved_clip
+
+print("[18] 分级规则：学院邮件必须稳定为 A（不再时 A 时 C）")
+_terms_cfg = config.from_dict({"faculty": "School of Science / 理学院",
+                               "faculty_keywords": ["SCI", "ab"]})
+check("faculty_terms 按分隔符拆开、丢掉过短的词",
+      _terms_cfg.faculty_terms == ["School of Science", "理学院", "SCI"])
+
+_fac_cfg = config.from_dict({"faculty": "School of Science"})
+_fac_mail = {"subject": "Recruitment Talk", "sender": "advise@ust.hk",
+             "sender_name": "SCI/HOME, School of Science", "body": "short body"}
+_other_mail = {"subject": "HKUST Daily Event Alert", "sender": "calendar@ust.hk",
+               "sender_name": "HKUST Event Calendar", "body": "events"}
+
+_v = [classifier.Verdict(level="C", is_school=True),
+      classifier.Verdict(level="B", is_school=True)]
+_n = classifier.apply_faculty_override([_fac_mail, _other_mail], _v, _fac_cfg)
+check("学院发来的邮件从 C 提升为 A", _v[0].level == "A" and _n == 1)
+check("非学院的校级邮件不受影响", _v[1].level == "B")
+
+_v = [classifier.Verdict(level="S", is_school=True)]
+classifier.apply_faculty_override([_fac_mail], _v, _fac_cfg)
+check("已经是 S 的学院邮件不被降级", _v[0].level == "S")
+
+_v = [classifier.Verdict(level="C", is_school=False)]
+classifier.apply_faculty_override([_fac_mail], _v, _fac_cfg)
+check("非学校邮件不参与该规则（保持不写回）",
+      _v[0].level == "C" and _v[0].is_school is False)
+
+_by_signature = [{"subject": "x", "sender": "noreply@example.com", "sender_name": "Office",
+                  "body": "Best regards, School of Science, HKUST"}]
+_v = [classifier.Verdict(level="C", is_school=True)]
+classifier.apply_faculty_override(_by_signature, _v, _fac_cfg)
+check("显示名看不出、但签名里的学院名同样能命中", _v[0].level == "A")
+
+_v = [classifier.Verdict(level="C", is_school=True)]
+check("没填学院时该规则不生效",
+      classifier.apply_faculty_override([_fac_mail], _v, config.from_dict({})) == 0
+      and _v[0].level == "C")
+
+_block = classifier._email_block(1, {"subject": "Hi", "sender": "advise@ust.hk",
+                                     "sender_name": "SCI/HOME, School of Science",
+                                     "body": "H" * 500 + " SIGNATURE School of Science"})
+check("提示词里带上发件人显示名（学院身份藏在这里）",
+      "SCI/HOME, School of Science" in _block)
+check("长正文会附上末尾节选（签名在那里）", "SIGNATURE" in _block)
+
+_spec_empty = classifier.build_spec(config.from_dict({"faculty": "", "name": "",
+                                                      "student_id": "", "courses": []}))
+check("空配置不会把规则写成「(未填写)」这种废话", "(未填写)" not in _spec_empty)
+check("没填学院时规则里不出现学院条件", "我所在的学院" not in _spec_empty)
+_spec_full = classifier.build_spec(config.from_dict({"faculty": "School of Science"}))
+check("填了学院时规则里出现学院条件", "School of Science" in _spec_full)
+
+print("[19] 连接日志不刷屏 + 批次失败自动拆分")
+_saved_get_token = graph_mod.get_token
+_saved_settings = graph_mod._settings
+_saved_me = graph_mod.GraphMail.me
+_conn_logs: list = []
+try:
+    graph_mod.get_token = lambda *a, **kw: "TOKEN"
+    graph_mod._settings = lambda: config.from_dict({}).graph
+    graph_mod.GraphMail.me = lambda self: {"displayName": "Tester",
+                                           "userPrincipalName": "t@example.com"}
+    for _ in range(3):
+        graph_mod.connect(auto_launch=False, log=_conn_logs.append)
+    check("连续三次连接只打一行 connected as（监听每 30 秒一轮，不能刷屏）",
+          len([line for line in _conn_logs if "connected as" in line]) == 1)
+finally:
+    graph_mod.get_token = _saved_get_token
+    graph_mod._settings = _saved_settings
+    graph_mod.GraphMail.me = _saved_me
+
+_saved_ask = ai.ask_json
+_batch_sizes: list = []
+_split_logs: list = []
+
+
+def _flaky_ask(prompt, ai_cfg, log=print, **kwargs):
+    """4 封及以上就整批失败 —— 模拟"输出额度被撑爆"那种整批作废。
+
+    期望的拆分阶梯（batch_size=8）：8 失败 → 4+4 失败 → 2+2+2+2 成功。
+    """
+    size = prompt.count("\n发件人: ")
+    _batch_sizes.append(size)
+    if size >= 4:
+        return None
+    return {"items": [{"学校": True, "级别": "C", "截止日期": None}] * size}
+
+
+try:
+    ai.ask_json = _flaky_ask
+    _eight = [{"subject": f"m{i}", "sender": "a@ust.hk", "body": "x"} for i in range(8)]
+    _got = classifier.classify(_eight, config.from_dict({"courses": [], "batch_size": 8}),
+                               log=_split_logs.append)
+    check("整批失败后对半拆分重试",
+          _batch_sizes[:1] == [8] and _batch_sizes.count(4) == 2 and _batch_sizes.count(2) == 4)
+    check("拆开后每一封最终都拿到了结果", all(v is not None for v in _got))
+    check("日志里说明了在拆分", any("retrying as" in line for line in _split_logs))
+finally:
+    ai.ask_json = _saved_ask
 
 print(f"\n全部通过：{ok} 项")
 print("\n--- build_spec 实际产出（配置缺字段时的样子）---")

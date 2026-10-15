@@ -45,6 +45,7 @@ from .outlook import (                                            # noqa: F401
     SUM_COMMAND_RE,
     SUM_NAME,
     OutlookNotRunning,
+    _notice,
     category_names,
     has_our_category,
     integrity_level,
@@ -584,8 +585,12 @@ def connect(*, auto_launch: bool = True,
         me = client.me()
     except GraphError as ex:
         raise OutlookNotRunning(f"Graph could not read your account: {ex}") from ex
-    log(f"[graph] connected as {me.get('displayName')} "
-        f"<{me.get('userPrincipalName') or me.get('mail')}>")
+    # 例行连接日志每个进程只打一次：监听每 30 秒连一次，不然活动日志会被
+    # "connected as ..." 刷屏（实测截图上连着刷了 7 行），有用的事件被挤掉。
+    # 复用 COM 后端那套抑制机制，日志语义保持一致。
+    _notice(log, "graph-connected",
+            f"[graph] connected as {me.get('displayName')} "
+            f"<{me.get('userPrincipalName') or me.get('mail')}>")
     return client, GraphSession(client)
 
 

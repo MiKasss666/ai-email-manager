@@ -367,8 +367,18 @@ class Config:
 
     @property
     def faculty_terms(self) -> List[str]:
-        """「来源 = 学院」的判定词：faculty 本身 + 额外关键词。"""
-        return ([self.faculty] if self.faculty else []) + list(self.faculty_keywords)
+        """「来源 = 学院」的判定词：faculty 本身 + 额外关键词。
+
+        会按分隔符拆开（"School of Science / 理学院" → 两个词），因为邮件里
+        往往只出现其中一段；过短的（<3 字符）丢掉，避免误命中。
+        """
+        out: List[str] = []
+        for raw in ([self.faculty] if self.faculty else []) + list(self.faculty_keywords):
+            for piece in re.split(r"[/,、|;]", str(raw or "")):
+                piece = piece.strip()
+                if len(piece) >= 3 and piece.lower() not in {t.lower() for t in out}:
+                    out.append(piece)
+        return out
 
     def is_school_address(self, address: str) -> bool:
         """发件人地址是否属于学校 —— 命中即**确定性认定为学校邮件**。

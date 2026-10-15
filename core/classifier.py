@@ -6,19 +6,26 @@
 确定性的「我参与的课程 → S」也由 config 的课程列表生成。
 换学校 / 换学院 / 换课程，只需要改 config.json。
 
-决策顺序（与 spec.md 一致）：
+决策顺序：
     第 -1 步 学校邮件判定：AI 判「这封是不是学校邮件」；发件人域名命中 school_domains 的
-             由代码直接认定（确定性，优先于 AI）。不是学校邮件 → 不贴任何标签
-    第 0 步  我参与的课程                        → S（确定性正则，优先于 AI）
-    第 1 步  来源（学院 / 宿舍 / 其它课程 / 个人） → A
-    第 2 步  A 中 urgent_days 天内 deadline 或需交材料 → 升 S
-    第 3 步  个人发展 / 学习类                    → B
-    第 4 步  娱乐活动 / 其余                      → C
+              由代码直接认定（确定性，优先于 AI）。不是学校邮件 → 不贴任何标签
+    第 0 步  我参与的课程                        → 至少 A（确定性正则，优先于 AI；
+                                                    S 留给"要动手 + 有截止"）
+    第 1 步  我学院/系发来的                     → 至少 A（确定性：显示名/地址/签名匹配，只升不降）
+    第 2 步  需我做事 + urgent_days 天内截止      → S（**不限来源** —— 校级单位的报名截止同样算）
+    第 3 步  来源（学院 / 宿舍 / 其它课程 / 点名到我） → A
+    第 4 步  需要我报名/申请/提交                 → B
+    第 5 步  通知型（简报/新闻/讲座通知/过期）     → C
 
 第 -1 步为什么必须让 AI 参与：只看发件人域名会漏 —— 学校事务经常由外部平台代发
 （Canvas 通知、问卷、报名/活动系统…），域名不是学校的，内容却是学校事务。
 反过来，域名命中的一定是学校邮件，所以那一类不问 AI，由代码直接认定。
 判为「不是学校邮件」的邮件不写回 Outlook（保持原样，不贴 S/A/B/C）。
+
+第 1 步为什么必须由代码兜底：学院的真实身份常常**不在发件地址里** ——
+`advise@ust.hk` 的显示名才是 `SCI/HOME, School of Science`，而正文签名里的学院名
+又落在开头 400 字符之外。模型两处都看不到，于是同一个发件人会时 A 时 B 时 C
+（实测：同一发件人的 6 封邮件出现过 4 个不同级别）。
 """
 from __future__ import annotations
 
@@ -30,7 +37,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from . import ai, mail as outlook
 from .config import LEVELS, Config
 
-BODY_CHARS = 400  # 送进模型的正文截断长度（判级只需要依据，不需要全文）
+BODY_CHARS = 400        # 送进模型的正文**开头**截断长度
+BODY_TAIL_CHARS = 300   # 另外附上正文**末尾**这么多字符 —— 签名（学院名、单位名）通常在那里
 
 _LEVEL_KEYS = ("级别", "level")
 _DEADLINE_KEYS = ("截止日期", "deadline", "due")
@@ -57,16 +65,49 @@ class Verdict:
 
 
 # ── 规则文本（提示词的唯一真源）────────────────────────────────────
+def faculty_terms(cfg: Config) -> List[str]:
+    """我所在学院/系的识别词（拆词与去重规则在 config.faculty_terms，这里只转发）。"""
+    return list(cfg.faculty_terms)
+
+
 def build_spec(cfg: Config) -> str:
     """用配置拼出分级规则文本。
 
     config 里每个影响判级的字段都必须出现在这里，否则它就是「永远不起作用的开关」。
+    反过来，字段为空时**不要**把条件写进去 —— 否则规则里会留下
+    「称呼含「(未填写)」」这种永远不可能成立的废话，白白干扰模型。
     """
     na = "(not set)" if cfg.is_english else "(未填写)"
     courses = "、".join(cfg.courses) or na
-    sources = "、".join(cfg.faculty_terms) or na
+    faculty = "、".join(faculty_terms(cfg)) or na
     dorms = "、".join(cfg.dorm_keywords) or na
     domains = "、".join(cfg.school_domains) or na
+
+    # 只在真的配置了的时候才写进规则；没配置的字段绝不出现，免得留下
+    # 「称呼含「(未填写)」」这种永远不可能成立的条件去干扰模型。
+    terms = faculty_terms(cfg)
+    if terms:
+        a_clauses = [f"来自我所在的学院/系/课程组 —— 发件人显示名、发件地址或正文签名里出现"
+                     f"「{'、'.join(terms)}」（学院组织的讲座、活动、招聘会也算 A）"]
+    else:
+        a_clauses = []
+    if cfg.dorm_keywords:
+        a_clauses.append(f"宿舍/住宿相关（关键词：{dorms}）")
+    if cfg.course_code_regex:
+        a_clauses.append(f"其它课程编号（正则 {cfg.course_code_regex}）")
+    who = []
+    if cfg.name:
+        who.append(f"称呼含「{cfg.name}」")
+    if cfg.student_id:
+        who.append(f"正文含我的学号 {cfg.student_id}")
+    if who:
+        a_clauses.append("点名到我的：" + " 或 ".join(who))
+    a_clauses.append("与我的学业直接相关的官方事务：选课、考试、成绩、报名、缴费、"
+                     "表格/材料、毕业、交换项目、图书馆到期提醒")
+    a_list = "\n".join(f"  · {c}" for c in a_clauses)
+    s_line = (f"- 含这些我参与的课程 → 直接 S：{courses}" if cfg.courses
+              else "- （没有配置课程清单，不按课程名判 S；S 由下面的 deadline / 需交材料决定）")
+
     return f"""分级规则（先判来源属性，再判 S/A/B/C）：
 
 第一步 · 这封是不是「学校邮件」？
@@ -76,18 +117,52 @@ def build_spec(cfg: Config) -> str:
 - 发件人域名本身就是学校的（{domains}）→ 一律算学校邮件
 - 不是学校邮件 → "学校": false，级别字段随便填；是 → "学校": true，再按第二步判级
 
-第二步 · 学校邮件的 S/A/B/C 判级：
-- 含这些我参与的课程 → 直接 S：{courses}
-- A（来源，满足任一）：发件人来自「{sources}」；宿舍/住宿相关邮件（关键词：{dorms}）；其它课程编号（正则 {cfg.course_code_regex}）；称呼含「{cfg.name or na}」或正文含我的学号 {cfg.student_id or na}
-- A 内升 S：{cfg.urgent_days} 天内 deadline，或需交资料/文件
-- B（非 A）：个人发展(申研/计划申请/教授科研)、学习类
-- C：娱乐/活动类（未报名）、其余兜底
-- 已报名活动 → A 及以上"""
+第二步 · 学校邮件的 S/A/B/C 判级（**先判 S，再判 A/B/C**）：
+{s_line}
+- S（第二条件，不看发件人是谁）：**需要我做某件事**且有 {cfg.urgent_days} 天内的截止日期 ——
+  交作业、交表格/材料、报名截止、缴费截止、考试时间。来自学院是 S，来自校级单位也是 S。
+  注意两点：
+  · **活动举办日期不算截止**。「某讲座/招聘会/欢迎会 10 月 20 日举行」不是 S，
+    只有"我必须在那之前做点什么"才是；
+  · **已经过期的**（报名/活动日期已过、也不再需要我补做什么）→ 不是 S，按 A/B/C 判，
+    通常落到 C。
+- A（满足任一）：
+{a_list}
+- B（非 A 也非 S）：**需要我报名/申请/提交**的东西 —— 招聘会与 Career Center 的 Co-op/实习项目、
+  工作坊、语言或心理课程、创业比赛、交流与夏令营报名、科研机会、申研与计划申请
+- C：通知型内容，我不需要做任何事 —— HKUST Daily Event Alert、Press Release 新闻稿、
+  讲座通知（如 IAS Distinguished Lecture）、图书馆开放时间、社团活动宣传、比赛围观、
+  商家推广、已过期的通知、其余兜底
+- 已报名的活动 → A（要交材料或有截止才升 S）
+
+判断 B 还是 C 只看一件事：**要不要我报名/申请/提交**。要 → B；只是告诉我有个活动 → C。"""
 
 
 def _email_block(index: int, email: Dict[str, Any]) -> str:
-    body = (email.get("body") or "")[:BODY_CHARS] or "(无正文)"
-    return f"[{index}] {email.get('subject')}\n发件人: {email.get('sender')}\n正文: {body}"
+    """一封邮件送进模型的样子。
+
+    两处细节都是踩出来的：
+      · **发件人显示名必须带上** —— 学院/单位的真实身份常常只在这里
+        （例：`SCI/HOME, School of Science <advise@ust.hk>`，光看地址看不出是学院）；
+      · **正文末尾也要给一段** —— 签名（学院名、单位名、系别）几乎总在末尾，
+        只给开头的 400 字符时模型看不到，于是同一个发件人会时 A 时 C。
+    """
+    body = (email.get("body") or "").strip()
+    head = body[:BODY_CHARS] or "(无正文)"
+    tail = ""
+    if len(body) > BODY_CHARS:
+        # 不重复：短一点的正文补上"头部没覆盖到的部分"，长正文只取最后一段
+        tail = (body[BODY_CHARS:] if len(body) <= BODY_CHARS + BODY_TAIL_CHARS
+                else body[-BODY_TAIL_CHARS:])
+
+    name = str(email.get("sender_name") or "").strip()
+    addr = str(email.get("sender") or "").strip()
+    who = f"{name} <{addr}>" if name and addr else (name or addr or "(未知发件人)")
+
+    block = f"[{index}] {email.get('subject')}\n发件人: {who}\n正文: {head}"
+    if tail:
+        block += f"\n（正文末尾节选，签名通常在这里）: {tail}"
+    return block
 
 
 def build_prompt(emails: Sequence[Dict[str, Any]], cfg: Config) -> str:
@@ -259,7 +334,14 @@ def enrolled_regex(cfg: Config):
 
 def apply_enrolled_override(emails: Sequence[Dict[str, Any]], verdicts: Sequence[Verdict],
                             cfg: Config) -> int:
-    """命中我参与的课程 → 强制 S（优先于 AI）。原地修改，返回改写的封数。"""
+    """命中我参与的课程 → **至少 A**（优先于 AI，只升不降）。原地修改，返回改写的封数。
+
+    早先是"直接强制 S"，实测太钝：Canvas / StashTag 那些「lecture 12 has started!」
+    「Assignment Graded」之类**不需要我动手**的通知也被顶成 S，S 里三分之一都是这类，
+    真正紧急的反而淹没了。
+    现在这条规则只保证「课程邮件不会被当成可忽略」；S 仍然由"要不要我做 + 有没有截止"
+    来判（AI 说 S 就保持 S，不降级）。
+    """
     rx = enrolled_regex(cfg)
     if rx is None:
         return 0
@@ -267,14 +349,74 @@ def apply_enrolled_override(emails: Sequence[Dict[str, Any]], verdicts: Sequence
     changed = 0
     for email, verdict in zip(emails, verdicts):
         haystack = f"{email.get('subject') or ''}\n{email.get('body') or ''}"
-        if rx.search(haystack) and verdict.level != "S":
-            verdict.level = "S"
-            verdict.urgent = _is_urgent("S", verdict.deadline, cfg)
+        if rx.search(haystack) and LEVELS.index(verdict.level) > LEVELS.index("A"):
+            verdict.level = "A"
+            verdict.urgent = False
+            changed += 1
+    return changed
+
+
+# ── 确定性规则：我学院的邮件 → 至少 A ─────────────────────────────
+def apply_faculty_override(emails: Sequence[Dict[str, Any]], verdicts: Sequence[Verdict],
+                           cfg: Config) -> int:
+    """学院/系发来的邮件 → 至少 A（优先于 AI，只升不降）。原地修改，返回改写封数。
+
+    为什么必须由代码兜底：学院的真实身份常常**不在发件地址里** ——
+    `advise@ust.hk` 的显示名才是 `SCI/HOME, School of Science`，
+    而正文签名里的学院名又落在开头 400 字符之外。模型两处都看不到，
+    于是同一个发件人会时 A 时 B 时 C（实测：6 封里出现过 4 个不同级别）。
+    """
+    terms = [t.lower() for t in faculty_terms(cfg)]
+    if not terms:
+        return 0
+
+    changed = 0
+    for email, verdict in zip(emails, verdicts):
+        if not verdict.is_school:            # 非学校邮件本来就不写回，不动它
+            continue
+        if LEVELS.index(verdict.level) <= LEVELS.index("A"):
+            continue                          # 已经是 S/A，不降级
+        haystack = "\n".join(str(email.get(k) or "")
+                             for k in ("sender_name", "sender", "subject", "body")).lower()
+        if any(term in haystack for term in terms):
+            verdict.level = "A"
+            verdict.urgent = False
             changed += 1
     return changed
 
 
 # ── 分批调用模型 ──────────────────────────────────────────────────
+SPLIT_MIN = 2        # 拆到这个大小还不成功就不再拆（单封失败没有更小的可拆）
+SPLIT_MAX_DEPTH = 3  # 最多拆三层（40 → 20 → 10 → 5）
+
+
+def _ask_batch(batch: Sequence[Dict[str, Any]], cfg: Config,
+               log: Callable[..., None] = print,
+               should_stop: Optional[Callable[[], bool]] = None,
+               depth: int = 0) -> List[Optional[Verdict]]:
+    """一批邮件 → 与 batch 同序的结果（失败的位置为 None）。
+
+    整批失败时**对半拆开重试**。踩过的坑：一批 40 封时模型会因为输出额度被撑爆
+    （它有时先写一段推理再吐 JSON）而整批作废 —— 40 封邮件一起白跑。
+    拆成两半后即使一半仍然失败，另一半也能正常贴标签。
+    """
+    if should_stop is not None and should_stop():
+        return [None] * len(batch)
+
+    payload = ai.ask_json(build_prompt(batch, cfg), cfg.ai, log=log)
+    verdicts = to_verdicts(payload, len(batch), cfg) if payload is not None else None
+    if verdicts is not None:
+        return list(verdicts)
+
+    if len(batch) <= SPLIT_MIN or depth >= SPLIT_MAX_DEPTH:
+        return [None] * len(batch)
+
+    half = len(batch) // 2
+    log(f"  batch of {len(batch)} failed — retrying as {half} + {len(batch) - half}")
+    return (_ask_batch(batch[:half], cfg, log, should_stop, depth + 1)
+            + _ask_batch(batch[half:], cfg, log, should_stop, depth + 1))
+
+
 def classify(emails: Sequence[Dict[str, Any]], cfg: Config,
              log: Callable[..., None] = print,
              should_stop: Optional[Callable[[], bool]] = None) -> List[Optional[Verdict]]:
@@ -297,21 +439,30 @@ def classify(emails: Sequence[Dict[str, Any]], cfg: Config,
         end = start + len(batch)
         log(f"[batch {start // size + 1}] mails {start + 1}-{end} ...")
 
-        payload = ai.ask_json(build_prompt(batch, cfg), cfg.ai, log=log)
-        verdicts = to_verdicts(payload, len(batch), cfg) if payload is not None else None
-        if verdicts is None:
+        got = _ask_batch(batch, cfg, log, should_stop)
+        ok = [(email, verdict) for email, verdict in zip(batch, got) if verdict is not None]
+        if not ok:
             log(f"  batch failed, {len(batch)} mail(s) left unlabelled")
             continue
+        if len(ok) < len(batch):
+            log(f"  {len(batch) - len(ok)} mail(s) in this batch could not be classified")
 
-        changed = apply_enrolled_override(batch, verdicts, cfg)
+        batch_emails = [email for email, _ in ok]
+        batch_verdicts = [verdict for _, verdict in ok]
+
+        changed = apply_enrolled_override(batch_emails, batch_verdicts, cfg)
         if changed:
-            log(f"  deterministic rule (enrolled course) forced {changed} mail(s) to S")
+            log(f"  deterministic rule (enrolled course) raised {changed} mail(s) to A")
 
-        rescued = apply_school_override(batch, verdicts, cfg)
+        faculty = apply_faculty_override(batch_emails, batch_verdicts, cfg)
+        if faculty:
+            log(f"  deterministic rule (my faculty) raised {faculty} mail(s) to A")
+
+        rescued = apply_school_override(batch_emails, batch_verdicts, cfg)
         if rescued:
             log(f"  deterministic rule (school domain) kept {rescued} mail(s) in scope")
 
-        results[start:end] = verdicts
+        results[start:end] = got
 
     return results
 
