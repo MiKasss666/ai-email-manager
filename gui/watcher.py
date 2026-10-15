@@ -286,6 +286,7 @@ class WatchController:
     # ── 后台线程：真正干活 ────────────────────────────────────
     def _work(self) -> Dict[str, Any]:
         cfg = self._get_cfg()
+        self._runner.set_phase("connecting to Outlook")
         _app, ns = outlook.connect(log=self._log)
 
         # 先给"还没打 Sum 标签的总结报告"补标签。
@@ -327,6 +328,7 @@ class WatchController:
             outlook.ensure_sum_category(ns)
             outlook.write_categories(newest, [outlook.SUM_NAME])
             self._log(f'[watch] "sum" command received (levels: {letters.upper()})')
+            self._runner.set_phase(f"building the summary with the AI ({cfg.ai_active})")
             count = summarizer.summarize_inbox(cfg, letters, log=self._log)
             extra = self._run_commands(ns, cfg)      # 同一批里还有别的指令就一起办
             self._commit(next_seen)
@@ -357,7 +359,9 @@ class WatchController:
         self._log(f"[watch] {len(pending)} new mail(s) to classify")
         # 被 Force reset 放弃的这一轮要在安全点自己停下来，别再往邮箱里写
         should_stop = self._runner.should_stop
+        self._runner.set_phase(f"waiting for the AI ({cfg.ai_active})")
         verdicts = classifier.classify(pending, cfg, log=self._log, should_stop=should_stop)
+        self._runner.set_phase("writing categories to Outlook")
         ok, failed, skipped = classifier.apply_verdicts(pending, verdicts, log=self._log,
                                                         should_stop=should_stop)
         self._remember_ignored(classifier.not_school_entryids(pending, verdicts))
@@ -388,6 +392,7 @@ class WatchController:
         已打过标签的会被跳过，重复执行无害。
         """
         try:
+            self._runner.set_phase("tagging report mail in Outlook")
             reports = outlook.untagged_reports(ns, days=REPORT_TAG_DAYS)
         except Exception as ex:
             self._log(f"[watch] could not scan for untagged reports: {type(ex).__name__}: {ex}")
@@ -429,6 +434,7 @@ class WatchController:
             self._log(f'[watch] "sum" command found (levels: {letters.upper()})')
             outlook.ensure_sum_category(ns)
             outlook.write_categories(msg, [outlook.SUM_NAME])
+            self._runner.set_phase(f"building the summary with the AI ({cfg.ai_active})")
             count = summarizer.summarize_inbox(cfg, letters, log=self._log)
             done.append((letters, count))
         return done
@@ -458,8 +464,10 @@ class WatchController:
 
         self._log(f"[watch] catch-up: {len(pending)} unclassified mail(s) in the last "
                   f"{cfg.catchup_days} day(s)")
+        self._runner.set_phase(f"waiting for the AI ({cfg.ai_active})")
         verdicts = classifier.classify(pending, cfg, log=self._log,
                                        should_stop=self._runner.should_stop)
+        self._runner.set_phase("writing categories to Outlook")
         ok, failed, skipped = classifier.apply_verdicts(pending, verdicts, log=self._log,
                                                         should_stop=self._runner.should_stop)
         self._remember_ignored(classifier.not_school_entryids(pending, verdicts))

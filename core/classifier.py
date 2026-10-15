@@ -386,12 +386,20 @@ def not_school_entryids(emails: Sequence[Dict[str, Any]],
 def classify_inbox(cfg: Config, *, limit: Optional[int] = None, days: Optional[int] = None,
                    dry_run: bool = False, force: bool = False,
                    log: Callable[..., None] = print,
-                   should_stop: Optional[Callable[[], bool]] = None) -> Dict[str, int]:
+                   should_stop: Optional[Callable[[], bool]] = None,
+                   phase: Optional[Callable[[str], None]] = None) -> Dict[str, int]:
     """连接 → 读收件箱 → 分级 →（可选）写回。返回统计字典。
 
     dry_run=True 时只打印判定结果，绝不改邮件。
     force=True   时连已打过标签的邮件也重新判定（非学校邮件仍然不写回）。
+    phase        当前阶段的回调 —— 界面据此把「卡在 AI」和「卡在 Outlook」分开报，
+                 不再笼统地让用户去折腾 Outlook。
     """
+    def _phase(text: str) -> None:
+        if phase is not None:
+            phase(text)
+
+    _phase("connecting to Outlook")
     _app, ns = outlook.connect(log=log)
 
     for change in outlook.ensure_categories(ns):
@@ -403,6 +411,7 @@ def classify_inbox(cfg: Config, *, limit: Optional[int] = None, days: Optional[i
         return {"read": 0, "ok": 0, "failed": 0, "skipped": 0,
                 **{level: 0 for level in LEVELS}}
 
+    _phase(f"waiting for the AI ({cfg.ai_active})")
     verdicts = classify(emails, cfg, log=log, should_stop=should_stop)
 
     if dry_run:
@@ -418,6 +427,7 @@ def classify_inbox(cfg: Config, *, limit: Optional[int] = None, days: Optional[i
         skipped = sum(1 for v in verdicts if v is not None and not v.is_school)
         failed = len(verdicts) - ok - skipped
     else:
+        _phase("writing categories to Outlook")
         ok, failed, skipped = apply_verdicts(emails, verdicts, log=log,
                                              should_stop=should_stop)
 

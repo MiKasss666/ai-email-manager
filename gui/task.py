@@ -54,13 +54,17 @@ class RunToken:
 
     有了令牌：结果按「代次」认领，过期的直接丢弃；`cancel` 事件让旧任务在下一个
     安全点自己停下来（比如下一批 AI 调用之前、下一封写回之前）。
+
+    另外带一个 `phase`：当前这一步在等什么。界面据此把「卡在 AI」和「卡在 Outlook」
+    区分开 —— 否则只能按时间瞎猜，实测就把"等 DeepSeek 回话"误报成了"Outlook 没响应"。
     """
 
-    __slots__ = ("generation", "cancel")
+    __slots__ = ("generation", "cancel", "phase")
 
     def __init__(self, generation: int):
         self.generation = generation
         self.cancel = threading.Event()
+        self.phase = ""        # 当前在等什么（给人看的一句话）
 
     @property
     def cancelled(self) -> bool:
@@ -122,6 +126,20 @@ class TaskRunner:
         """
         token = self.token
         return bool(token is not None and token.cancelled)
+
+    def set_phase(self, text: str) -> None:
+        """记下「现在在等什么」（由工作线程调用，例如 'waiting for the AI (deepseek)'）。
+
+        界面用它把卡住的原因说准：卡在 AI 和卡在 Outlook 的处理方式完全不同。
+        """
+        token = self.token
+        if token is not None:
+            token.phase = text
+
+    @property
+    def phase(self) -> str:
+        """当前任务在等什么（主线程读；空闲时为空串）。"""
+        return self._token.phase if self._token is not None else ""
 
     def force_reset(self) -> None:
         """把一个卡死的任务标记为结束，让界面重新可用。

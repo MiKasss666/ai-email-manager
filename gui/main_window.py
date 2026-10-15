@@ -187,18 +187,31 @@ class MainWindow:
 
         Outlook 弹着对话框（选配置文件、安全提示）时，COM 调用会一直挂着 ——
         既不返回也不报错。没有这个提示，用户只会看到界面不动却不知道原因。
+
+        提示文案按**当前阶段**给（runner.phase）：卡在 AI 和卡在 Outlook 的处理方式
+        完全不同。之前只会说"Outlook has not answered"，实测把"等 DeepSeek 回话"
+        误报成了 Outlook 的问题，让人白折腾 Outlook。
         """
         try:
             if self.runner.busy:
                 elapsed = self.runner.elapsed
-                self._status.configure(text=f"Working ... {elapsed:.0f}s")
+                phase = self.runner.phase
+                self._status.configure(
+                    text=f"Working ... {elapsed:.0f}s" + (f" — {phase}" if phase else ""))
                 if elapsed > STUCK_HINT_SECONDS and not self._hinted_stuck:
                     self._hinted_stuck = True
-                    self.log.write(
-                        f"[warn] Outlook has not answered for {elapsed:.0f}s. It is most likely "
-                        f"showing a dialog (profile picker or security prompt) or still starting. "
-                        f"Bring Outlook to the front and dismiss it. If the task really is stuck, "
-                        f"click Force reset.")
+                    what = phase or "The current step"
+                    if phase.startswith("waiting for the AI") or phase.startswith("building the summary"):
+                        why = ("The AI provider has not answered. That is usually a slow or "
+                               "unavailable API on their side (503/504), not an Outlook problem. "
+                               "Wait a bit, or click Force reset and try again later; you can also "
+                               "switch to another backend in AI setting.")
+                    else:
+                        why = ("Outlook has not answered. It is most likely showing a dialog "
+                               "(profile picker or security prompt) or still starting. Bring "
+                               "Outlook to the front and dismiss it.")
+                    self.log.write(f"[warn] {what} has not finished for {elapsed:.0f}s. {why} "
+                                   f"If the task really is stuck, click Force reset.")
             else:
                 self._hinted_stuck = False
                 self._refresh_status()
@@ -376,7 +389,8 @@ class MainWindow:
         started = self.runner.run(
             lambda: classifier.classify_inbox(cfg, days=days, dry_run=dry_run,
                                               force=force, log=self.log.write,
-                                              should_stop=self.runner.should_stop),
+                                              should_stop=self.runner.should_stop,
+                                              phase=self.runner.set_phase),
             on_done=self._on_categorize_done,
             on_error=self._on_task_error,
         )

@@ -249,6 +249,32 @@ def main() -> int:
           stale_calls == ["fresh"] and app.runner.busy is False)
     check("主线程读不到任务令牌（令牌是各工作线程自己的）", app.runner.token is None)
 
+    # 卡住提示必须按「现在在等什么」说话：卡在 AI 和卡在 Outlook 的处理方式完全不同。
+    # 实测踩过：等 DeepSeek 回话等了 8 分钟，界面却一直说 "Outlook has not answered"。
+    print("[3b-3] 卡住提示按阶段说话（不再一律怪 Outlook）")
+    import gui.main_window as _mw
+    _saved_hint = _mw.STUCK_HINT_SECONDS
+    _mw.STUCK_HINT_SECONDS = 0                    # 让提示立刻触发
+    app.log.clear()
+    hold = threading.Event()
+
+    def _stall_in_ai():
+        app.runner.set_phase("waiting for the AI (deepseek)")
+        hold.wait(15)
+
+    try:
+        app.runner.run(_stall_in_ai)
+        pump(root, 1.6)                           # 看门狗每秒一次，要跨过它的 tick
+        _text = app.log.contents()
+        check("状态栏显示当前阶段", app.runner.phase.startswith("waiting for the AI"))
+        check("提示指向 AI 服务商，而不是让用户去折腾 Outlook",
+              "AI provider has not answered" in _text and "Outlook has not answered" not in _text)
+    finally:
+        _mw.STUCK_HINT_SECONDS = _saved_hint
+        app.runner.force_reset()
+        hold.set()
+        pump(root, 0.5)
+
     print("[3c] 按钮状态每秒自愈")
     # 直接改 runner 的内部状态，模拟「某处漏了一次解除禁用」这种状态漂移
     app.runner._busy = True

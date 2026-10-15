@@ -24,6 +24,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -83,12 +84,46 @@ def describe(ai_cfg: AiProfile) -> str:
 
 
 # ── 对外：主入口 ──────────────────────────────────────────────────
+def _call_with_deadline(work: Callable[[], Any], seconds: int, what: str) -> Any:
+    """跑 work()，最多等 `seconds` 秒；超时抛瞬时 AiError。
+
+    为什么需要：`urllib` 的 timeout 只约束**单次 socket 操作**。实测遇到过一次
+    「连接建好了、请求发出去了、服务器一直不回」——socket 超时始终没触发，程序
+    卡在那个 `response.read()` 里 8 分钟以上（界面一直 Working …，日志里连一行
+    `transient failure` 都没有）。这里用墙钟时间兜底，保证**任何**一次调用都有上限。
+
+    超时后残留的取数线程是 daemon：socket 最终失败时它自己会结束，不会拖着进程。
+    """
+    box: Dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            box["value"] = work()
+        except BaseException as ex:          # 原样带回给调用方判断
+            box["error"] = ex
+
+    worker = threading.Thread(target=run, daemon=True, name="ai-call")
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        raise AiError(
+            f"{what} did not answer within {seconds}s "
+            f"(the connection was accepted but nothing came back — this is a problem on the "
+            f"provider's side, not with Outlook)", transient=True)
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
 def ask(prompt: str, ai_cfg: AiProfile, *, log: Callable[..., None] = print,
         retries: int = 3) -> str:
     """把提示词发给模型，返回原始输出文本。
 
     瞬时故障（限流 / 5xx / 超时 / 网络中断）按 5s、10s… 退避重试；
     重试用尽或属于配置类错误（401、404、model 名不对）时抛 AiError。
+
+    每次尝试都有 `ai_cfg.timeout` 秒的**墙钟上限**（见 _call_with_deadline）——
+    不能只靠 socket 超时，那种"连接挂着不回"的情况它兜不住。
     """
     if ai_cfg.missing:
         raise AiError(f'ai.active = "{ai_cfg.name}" does not exist. '
@@ -101,7 +136,8 @@ def ask(prompt: str, ai_cfg: AiProfile, *, log: Callable[..., None] = print,
     last: Optional[AiError] = None
     for attempt in range(1, retries + 1):
         try:
-            return call(prompt, ai_cfg)
+            return _call_with_deadline(lambda: call(prompt, ai_cfg), ai_cfg.timeout,
+                                       f'AI backend "{ai_cfg.name}"')
         except AiError as ex:
             last = ex
             if not ex.transient or attempt == retries:

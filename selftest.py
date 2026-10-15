@@ -1,4 +1,4 @@
-﻿"""selftest.py — 纯逻辑自测：不连接 Outlook、不调用 AI、不消耗任何额度。
+"""selftest.py — 纯逻辑自测：不连接 Outlook、不调用 AI、不消耗任何额度。
 
 用法（在 Email_manager_beta 目录下）：
     py -3 selftest.py
@@ -100,6 +100,48 @@ check("JSONL：一行一个对象也能解析成数组",
 check("JSONL 最后一行写坏了：前面完整的仍能拿到",
       ai.parse_json('{"级别": "A"}\n{"级别": "S"}\n{"级别')
       == [{"级别": "A"}, {"级别": "S"}])
+
+print("[2b] AI 调用有墙钟上限（socket 超时兜不住的那种挂起）")
+import time as _t  # noqa: E402
+
+_saved_callers = dict(ai._CALLERS)
+_slow = config.AiProfile(name="slow", type="openai", base_url="https://example.invalid",
+                         model="m", api_key="k", timeout=1)
+try:
+    ai._CALLERS["openai"] = lambda prompt, cfg: _t.sleep(30)
+    _t0 = _t.time()
+    _timed_out = None
+    try:
+        ai.ask("hi", _slow, log=lambda *a: None, retries=1)
+    except ai.AiError as ex:
+        _timed_out = ex
+    _took = _t.time() - _t0
+    check("挂起的调用会在 timeout 秒后被放弃（不再无限等）",
+          _timed_out is not None and _took < 10)
+    check("这种超时算瞬时故障（会重试，而不是判死）",
+          _timed_out is not None and _timed_out.transient)
+    check("错误信息说清是对方没回话、不是 Outlook 的问题",
+          _timed_out is not None and "did not answer within" in str(_timed_out))
+
+    class _Boom(RuntimeError):
+        pass
+
+    def _throw(prompt, cfg):
+        raise _Boom("boom")
+
+    ai._CALLERS["openai"] = _throw
+    _other = None
+    try:
+        ai.ask("hi", _slow, log=lambda *a: None, retries=1)
+    except BaseException as ex:
+        _other = ex
+    check("调用里抛的其它异常原样带回（不被兜成超时）", isinstance(_other, _Boom))
+
+    ai._CALLERS["openai"] = lambda prompt, cfg: "OK"
+    check("正常返回照样能用", ai.ask("hi", _slow, log=lambda *a: None, retries=1) == "OK")
+finally:
+    ai._CALLERS.clear()
+    ai._CALLERS.update(_saved_callers)
 
 print("[3] classifier")
 spec = classifier.build_spec(cfg)
