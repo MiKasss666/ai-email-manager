@@ -18,42 +18,7 @@
 
 **Built for students at HKUST (Hong Kong University of Science and Technology)** — an AI assistant that sorts your mailbox into S / A / B / C and emails you a summary report on demand. It talks to **Microsoft Graph** over HTTPS, so **desktop Outlook is not required**. Course codes, school and dorm keywords ship pre-filled for HKUST; other schools only need a few config changes.
 
-Four sections: **Prerequisites → Configuration → Classification logic → Usage**, plus **Troubleshooting** at the end.
-
----
-
-## What's new in v2.0.3
-
-- The grey line under the summary header ("clicking a title opens Outlook on the web…") is gone — the report now goes straight to the level sections.
-- The links themselves are unchanged: a title still opens that exact message in Outlook on the web, on desktop, in the new Outlook, and on a phone.
-
-## What's new in v2.0.2
-
-- **Fixed: the links in the summary email did nothing when clicked.** They used `outlook:<entry id>`, and `outlook:` is not a registered Windows URL scheme (classic Outlook only understands fixed commands such as `outlook:inbox`), so clicks were silently ignored.
-- Titles in the summary now use the **`webLink`** Microsoft Graph provides for every message: clicking one opens **that message in Outlook on the web**, in your browser. It works from classic Outlook, the new Outlook, a phone, anywhere.
-- The report says so at the top, and when a message has no web link the title is rendered as **plain text** instead of a link that leads nowhere.
-
-## What's new in v2.0.1
-
-A patch release on top of v2.0.0 — all of it is fixing things that v2.0.0 got wrong.
-
-- **Fixed: writing categories back failed on every mail** with `HTTP 405 ... The OData request is not supported`. The mail id was lost between two normalisation passes, so the PATCH was sent to `/me/messages/` with no id. Reading worked, which is why it looked like a permission problem. The red flag and the `Sum` tag were affected too.
-- **Fixed: mail from your own faculty/department is A again.** The faculty's identity lives in the sender's **display name** (`SCI/HOME, School of Science <advise@ust.hk>`) and in the **signature at the end of the body** — and the AI prompt saw neither (the body was truncated to the first 400 characters and the display name was not sent at all). The same sender came out as A, B, C and S across six mails. There is now a deterministic rule: mail from your faculty → **at least A**.
-- **Fixed: S means "act now" again.** The "deadline within N days → S" escalation is no longer limited to A (a university-wide application with a real form deadline used to stay at B), an **event date is not a deadline** (a talk happening soon is not S), and anything already **expired** drops to C.
-- **Changed: enrolled-course mail is "at least A" instead of "forced S".** Notifications like `lecture 12 has started!` or `Assignment Graded` no longer fill up S; S is left to the "must do something + has a deadline" test.
-- **Changed: `urgent_days` default is 14 days** (was 30), so S stays meaningful.
-- **Fixed: a failed batch is retried in halves** (40 → 20+20 → …) instead of losing all 40 mails at once to a single bad reply.
-- **Fixed: the Activity log no longer repeats `connected as ...` every 30 seconds**, and it is fully English now.
-
-## What's new in v2.0.0
-
-- **The mail backend moved from Outlook COM to Microsoft Graph.** Desktop (Classic) Outlook is **no longer required at all** — the app works with Outlook not installed, not running and not signed in. Reads (inbox, bodies, categories, read state) and writes (the S/A/B/C categories, the red flag, the summary email) all go to the mailbox through the Graph REST API over HTTPS.
-- **The only new user step: a one-time Microsoft sign-in on first launch.** No stored credential → the app prints the device code in the **Activity log**, opens your default browser with the code already in the URL, and puts the code on the clipboard too. After that it is silent: the credential is cached in `graph_token.json` and renewed automatically.
-- **New config keys**: `mail_source` (`graph` default, or `outlook` for the legacy backend) and the `graph` section (`tenant`, `client_id`, `scopes`, `probe_scopes`, `open_browser`, `token_cache`). See [section 2](#2-configuration).
-- **`pywin32` is now optional.** The Graph path uses only the Python standard library; `pywin32` is needed only by the legacy Outlook backend.
-- **Sign-in asks for `Mail.ReadWrite`** (plus `offline_access openid profile User.Read`); the read-only self-check asks only for `Mail.Read`.
-
-The legacy Outlook Classic backend is still available as a fallback — see [Optional: legacy Outlook backend](#optional-legacy-outlook-backend).
+Four sections: **Prerequisites → Core classification logic and the summary feature → How to use → Current version at a glance**.
 
 ---
 
@@ -77,6 +42,15 @@ The legacy Outlook Classic backend is still available as a fallback — see [Opt
 | **Mail account** | A Microsoft / Microsoft 365 account you can sign in to. **Outlook does not have to be installed, running or signed in.** |
 | **Sign-in** | **One-time Microsoft sign-in on first launch** (OAuth2 device-code flow). You can sign out at any time by deleting the cached credential — see [Troubleshooting](#troubleshooting). |
 | **How to launch** | **Launch it as a normal user**: double-click it in File Explorer, or start it from the Start menu. |
+| **Internet access** | Required: the mailbox is reached through Microsoft Graph, a cloud API over HTTPS. |
+
+### What you do not need
+
+| Not needed | Why |
+|---|---|
+| **Desktop (Classic) Outlook** | Mail is read and written through Microsoft Graph over HTTPS. Outlook need not be installed, running or signed in. |
+| **Python** | Only for running from source. The packaged build is a folder with `EmailManager.exe` in it. |
+| **A local mail server or IMAP setup** | A Microsoft / Microsoft 365 account is all it takes; there is no mail-client configuration inside the app. |
 
 ### Mail backend
 
@@ -85,14 +59,27 @@ The legacy Outlook Classic backend is still available as a fallback — see [Opt
 | **graph** (default) | Microsoft Graph REST API over HTTPS, Python standard library only | **No** — not installed, not running, not signed in |
 | outlook (legacy) | Outlook Classic driven through COM (`pywin32`) | Yes |
 
-Switch with `mail_source` in `config.json`; the Graph section is described in [section 2](#2-configuration).
+Switch with `mail_source` in `config.json`; the `graph` fields are described in [section 3](#3-how-to-use).
+
+### One-time Microsoft sign-in
+
+With the default `graph` backend the app signs in to Microsoft **once**:
+
+1. When no stored credential exists it prints the **device code on its own line in the Activity log** (the log panel has a `Copy` button).
+2. It **opens your default browser** automatically. The URL it opens already carries the code (`...?user_code=XXXX`), so on the sign-in page you usually just confirm.
+3. It also puts the device code **on the clipboard**, so pressing `Ctrl+V` on the sign-in page is enough.
+4. It waits for you (up to about **15 minutes**) and **continues by itself** once the sign-in finishes — no button to press.
+
+Afterwards the credential is cached in `graph_token.json` next to `config.json` and reused silently (refresh token, roughly 90 days, rolling renewal), so normal use never asks you to sign in again. Delete that file to sign out — the next launch asks you to sign in again.
+
+The permissions requested are **`Mail.ReadWrite`** (needed to write the S/A/B/C categories back to the mailbox), plus `offline_access openid profile User.Read`; the read-only self-check asks only for **`Mail.Read`**. If `graph.open_browser` is `false` the browser is not opened — the code still appears in the log for you to enter by hand.
 
 ### How to run (pick one)
 
 | Option | Entry point | Requirements |
 |---|---|---|
 | **Packaged build** | `EmailManager\EmailManager.exe` | Nothing to install. SmartScreen blocks it once on first run: click `More info` → `Run anyway`. |
-| **From source** | `start.bat` | Python 3.9+ (`py -3 -m pip install -r requirements.txt` installs the optional `pywin32`, which only the legacy Outlook backend needs). **No SmartScreen prompt.** |
+| **From source** | `start.bat` | Python 3.9+ (`py -3 -m pip install -r requirements.txt` installs only the optional `pywin32`, which the legacy Outlook backend needs). **No SmartScreen prompt.** |
 
 ### Optional: legacy Outlook backend
 
@@ -134,7 +121,85 @@ Model names change over time — always check your provider's docs.
 
 ---
 
-## 2. Configuration
+## 2. Core classification logic and the summary feature
+
+### Four levels + one marker
+
+| Level | Meaning | Colour |
+|---|---|---|
+| **S** | Act now: you have to do something and the deadline is within `urgent_days` (14 days by default) — homework, forms, materials to submit, registration or payment deadlines, exam times | orange |
+| **A** | Important and from a trusted source: your faculty, dorm/housing, your enrolled courses, other course codes, official academic business | purple |
+| **B** | Must register / apply / submit: career talks, Co-op and internship programmes, workshops, competitions, camps, exchange and grad-school applications | blue |
+| **C** | Nothing to do: event digests, press releases, lecture notices, library opening hours, club promotions, expired notices | grey |
+| **Sum** | The app's own summary reports and `sum` command mail | yellow |
+
+When writing a category back, **only the app's own labels are replaced** (`S`/`A`/`B`/`C`/`Sum`): categories you defined yourself, or those applied by server rules, are **left untouched**; re-judging replaces the level instead of stacking. S mail whose deadline falls inside `urgent_days` also gets the **red flag**. The app never deletes entries from your Outlook category list.
+
+### Step 1 — is it school mail?
+
+Every mail passes this gate first. The AI decides "is this a school mail?" from the content; a sender whose domain matches `school_domains` (default `ust.hk`) is decided deterministically by code, without asking the AI. Mail judged **not** school mail is never labelled and never written back.
+
+The gate exists because school business is often sent by **external platforms** — Canvas notifications, forms, sign-up systems — whose domain is not the school's. A domain-only rule would miss those; judging the level first and asking later would mislabel them.
+
+### Step 2 — S / A / B / C
+
+- **S — something to do, and the deadline is real.** S means "I have to do something and the deadline is within `urgent_days` (default **14**) days": homework, forms or materials to hand in, registration or payment deadlines, exam times. S is judged **independently of who sent it** — a university-wide application with a real form deadline is S too. An event's **date of occurrence is not a deadline**, and anything already **expired** drops to C.
+- **At least A, by code.** Two deterministic rules can only *raise* a mail to **at least A**, never lower it: the mail contains one of your enrolled courses (`courses`), or it comes from your own faculty/department (`faculty`). `faculty` is matched against the sender's display name, address, subject and body — the faculty's real identity usually lives in the display name, e.g. `SCI/HOME, School of Science <advise@ust.hk>`.
+- **A, everything else that is important.** Dorm/housing mail, other course codes, mail addressed to you by name or containing your student id, and official academic business: course selection, exams, grades, registration, payment, forms, graduation, exchange, library due notices.
+- **B — something to register for, apply to or submit.** Career talks and Co-op / internship programmes, workshops, language or counselling courses, competitions, camps and exchange applications, research opportunities, grad-school applications.
+- **C — nothing to do.** Announcements: daily event digests, press releases, lecture notices, library opening hours, club promotions, already-expired notices.
+- **The tie-breaker between B and C is one question:** *do I have to register / apply / submit?* Yes → B, just an announcement → C.
+
+### Decision order at a glance
+
+```
+step 1  Is it school mail?  →  not school mail: never labelled, never written back
+        (a sender domain in `school_domains` is decided by code, no AI call)
+step 2  Level, first match wins:
+        must do something + a deadline within `urgent_days`   → S
+        one of your `courses`, or your `faculty`  ★ by code   → at least A
+        dorm / housing, another course code, your name or
+          student id, official academic business              → A
+        must register / apply / submit                        → B
+        an announcement that asks nothing of you              → C
+```
+
+- **Why the school-mail gate asks the AI**: a domain-only rule misses school business that is **sent on behalf of the school by external platforms** (Canvas notifications, surveys, sign-up systems…) — the domain is not the school's, but the content is. So the AI judges it from the content; only domain matches are decided by code (deterministic evidence outranks the AI).
+- **Non-school mail is never written to**: no label, no flag, and not counted as a failure (so no retry loop). Such mails are remembered in `watch_state.json` and are not sent to the AI again.
+- **Only three rules are deterministic**: the `school_domains` match, the `courses` match and the `faculty` match — local checks, no AI involved. They can only raise a level.
+- **Everything else is the AI's judgement**: the rules go into the prompt and the model judges each mail.
+- Each mail sent to the AI contains only: **sender, subject, first 400 characters of the body**. ⚠️ Because the gate reads the content, **every not-yet-judged inbox mail is sent to the AI** — if that matters to you, point the AI backend at a local model such as `ollama`.
+- `batch_size` mails go per request; if the model returns a different number of items the **whole batch is discarded** — better to miss than to mislabel.
+
+### The summary report
+
+1. Read the mail labelled `S/A/B/C` from the last `summary_days` days (default **7**) — the levels you asked for, if the command picked some
+2. Group by `S → A → B → C`
+3. Write one line per mail: the deadline, the course code, the action needed (the first 800 characters of the body are read, so the line can also carry weightings and company names)
+4. Render an HTML report → send it to `summary_recipient` (yourself by default)
+5. The subject carries a marker (`邮件总结` / `Email summary`, following `language`) so the app recognises its own report, tags it `Sum`, and **never classifies it**
+
+**Titles are links into Outlook on the web.** Every title in the report opens **that exact message** in Outlook on the web — via the `webLink` Microsoft Graph provides for every message — on a desktop, in the new Outlook, and on a phone. A message that has no web link gets its title rendered as **plain text** instead of a link that leads nowhere.
+
+**How to trigger it:** send yourself a mail whose subject is `sum` (add letters to choose the levels, e.g. `sum sabc`), or press **Sum** in the GUI.
+
+**Bullets never come back blank in bulk**: the model is asked for a JSON array of *exactly* N items; when the response is cut off by the output limit, a naive implementation throws the whole batch away. Three layers prevent that now: salvage the complete items and re-ask only for the rest → split a failed batch in half and retry → worst case only a single mail is affected, and the log names it.
+
+### Auto-watch
+
+| When | Behaviour |
+|---|---|
+| Startup | **Only starts when the config is complete** (missing `email` or an unusable AI backend keeps it off, and the log lists exactly what is missing) |
+| After saving settings | Turns on **the moment** the config becomes complete — no restart |
+| First tick | Classifies **existing unlabelled mail** within `catchup_days` and records the baseline |
+| Every N seconds (30 by default) | Only mail newer than the last-seen message is classified |
+| New mail is a `sum` command | Tag `Sum` → generate and send the summary |
+| Our own reports | Each tick scans for reports missing the `Sum` tag and fixes them (including historical ones) |
+| Mailbox temporarily unreachable | **Not treated as a failure**: one notice, then retry with a 120-second backoff and reconnect automatically (this covers both a Graph connection problem and the legacy backend finding Outlook unavailable) |
+
+---
+
+## 3. How to use
 
 ### Where the config lives
 
@@ -148,7 +213,7 @@ Model names change over time — always check your provider's docs.
 - **In the GUI (recommended)**: `User info` for your identity, `AI setting` for the backend and key
 - Edit `config.json` directly (reopen the app to pick it up)
 
-`mail_source` and the `graph` section have no GUI control yet, so **edit `config.json` for those**. The credential cache `graph_token.json` (see below) is written next to it after the first sign-in; both are personal data and are already in `.gitignore`.
+`mail_source` and the `graph` section have no GUI control yet, so **edit `config.json` for those**. The credential cache `graph_token.json` (see [One-time Microsoft sign-in](#one-time-microsoft-sign-in)) is written next to it after the first sign-in; both are personal data and are already in `.gitignore`.
 
 ### Identity fields
 
@@ -159,8 +224,8 @@ Model names change over time — always check your provider's docs.
 | `student_id` | Student ID. Appearing in the body → level A. | empty |
 | `school` | School name. **Display only**; the school-mail test uses `school_domains` below. | `香港科技大学 (HKUST)` |
 | `school_domains` | **Deterministic school-mail test**: a sender domain matching one of these is school mail without asking the AI. Not matching does **not** mean it isn't — school business is often relayed by external platforms, and the AI judges those from the content. | `ust.hk` |
-| `faculty` | Faculty / department, comma-separated. Match → level A. | empty |
-| `courses` | This term's course codes, comma-separated. **Match → level S directly** (deterministic, overrides the AI). | empty |
+| `faculty` | Faculty / department, comma-separated. Match → **at least A**. | empty |
+| `courses` | This term's course codes, comma-separated. **Match → at least A** (deterministic, code-side; it can only raise the level). | empty |
 | `faculty_keywords` | Extra faculty keywords. | empty |
 | `dorm_keywords` | Dorm / housing keywords. | HKUST defaults |
 | `course_code_regex` | Regex for course codes, used to spot mail from *other* courses → level A. | `[A-Z]{2,4}\d{3,4}[A-Z]?` |
@@ -201,80 +266,6 @@ The `api_key` in the config wins; when it is empty the environment variable is u
 
 Leave `api_key` empty to use the env var, so the key never lands in a file.
 
-### Signing in to the mailbox
-
-With the default `graph` backend the app signs in to Microsoft **once**:
-
-1. When no stored credential exists it prints the **device code on its own line in the Activity log** (the log panel has a `Copy` button).
-2. It **opens your default browser** automatically. The URL it opens already carries the code (`...?user_code=XXXX`), so on the sign-in page you usually just confirm.
-3. It also puts the device code **on the clipboard**, so pressing `Ctrl+V` on the sign-in page is enough.
-4. It waits for you (up to about **15 minutes**) and **continues by itself** once the sign-in finishes — no button to press.
-
-Afterwards the credential is cached in `graph_token.json` next to `config.json` and reused silently (refresh token, roughly 90 days, rolling renewal), so normal use never asks you to sign in again. Delete that file to sign out — the next launch asks you to sign in again.
-
-The permissions requested are **`Mail.ReadWrite`** (needed to write the S/A/B/C categories back to the mailbox), plus `offline_access openid profile User.Read`; the read-only self-check asks only for **`Mail.Read`**. If `graph.open_browser` is `false` the browser is not opened — the code still appears in the log for you to enter by hand.
-
----
-
-## 3. How classification works
-
-### Four levels + one marker
-
-| Level | Meaning | Colour |
-|---|---|---|
-| **S** | Act now: homework, exams, documents to submit, your enrolled courses | orange |
-| **A** | Important and from a trusted source: faculty, dorm, teachers, other courses | purple |
-| **B** | Worth a look: personal growth, talks, internships, study resources | blue |
-| **C** | Everything else: event notices, promotions, fallback | grey |
-| **Sum** | The app's own summary reports and `sum` command mail | yellow |
-
-When writing a category back, **only the app's own labels are replaced** (`S`/`A`/`B`/`C`/`Sum`): categories you defined yourself, or those applied by server rules, are **left untouched**; re-judging replaces the level instead of stacking. The app never deletes entries from your Outlook category list.
-
-### Decision order (first match wins)
-
-```
-step-1 AI decides whether the mail is school mail; a sender domain in `school_domains` is
-       decided by code without asking. Not school mail → no label at all.
-step0  sender/subject/body matches one of your `courses` → S   ★ deterministic rule, overrides the AI
-step1  trusted source (faculty / dorm / other course code / your name / student ID) → A
-step2  step1 matched and a deadline in the body is within `urgent_days` → A upgraded to S
-step3  personal growth / study related → B
-step4  everything else → C
-```
-
-- **Why step-1 asks the AI**: a domain-only rule misses school business that is **sent on behalf of the school by external platforms** (Canvas notifications, surveys, sign-up systems…) — the domain is not the school's, but the content is. So the AI judges it from the content; only domain matches are decided by code (deterministic evidence outranks the AI).
-- **Non-school mail is never written to**: no label, no flag, and not counted as a failure (so no retry loop). Such mails are remembered in `watch_state.json` and are not sent to the AI again.
-- **Only step0 and the domain match are deterministic**: local checks, no AI involved.
-- **step-1 and step1–step4 are done by the AI**: the rules go into the prompt and the model judges each mail.
-- Each mail sent to the AI contains only: **sender, subject, first 400 characters of the body**. ⚠️ Because step-1 reads the content, **every not-yet-judged inbox mail is sent to the AI** — if that matters to you, point the AI backend at a local model such as `ollama`.
-- `batch_size` mails go per request; if the model returns a different number of items the **whole batch is discarded** — better to miss than to mislabel.
-
-### Summary flow
-
-1. Read mail labelled `S/A/B/C` from the last `summary_days` days
-2. Group by `S → A → B → C`
-3. Generate one bullet per mail (first 800 characters of the body, so bullets can carry **deadlines, course codes, weightings, company names**)
-4. Render an HTML report → send it to `summary_recipient` (yourself by default)
-5. The subject carries a marker (`邮件总结` / `Email summary`, following `language`) so the app recognises its own report, tags it `Sum`, and **never classifies it**
-
-**Bullets never come back blank in bulk**: the model is asked for a JSON array of *exactly* N items; when the response is cut off by the output limit, a naive implementation throws the whole batch away. Three layers prevent that now: salvage the complete items and re-ask only for the rest → split a failed batch in half and retry → worst case only a single mail is affected, and the log names it.
-
-### Auto-watch
-
-| When | Behaviour |
-|---|---|
-| Startup | **Only starts when the config is complete** (missing `email` or an unusable AI backend keeps it off, and the log lists exactly what is missing) |
-| After saving settings | Turns on **the moment** the config becomes complete — no restart |
-| First tick | Classifies **existing unlabelled mail** within `catchup_days` and records the baseline |
-| Every N seconds (30 by default) | Only mail newer than the last-seen message is classified |
-| New mail is a `sum` command | Tag `Sum` → generate and send the summary |
-| Our own reports | Each tick scans for reports missing the `Sum` tag and fixes them (including historical ones) |
-| Mailbox temporarily unreachable | **Not treated as a failure**: one notice, then retry with a 120-second backoff and reconnect automatically (this covers both a Graph connection problem and the legacy backend finding Outlook unavailable) |
-
----
-
-## 4. Usage
-
 ### GUI controls
 
 | Control | What it does |
@@ -295,10 +286,14 @@ The log is also written to `app.log` (next to `config.json`) with `HH:MM:SS` tim
 
 The app is **single-instance**: a second launch tells you it is already running and exits. Two copies would each run their own watcher and write categories to the same mailbox at the same time.
 
+### The `sum` mail command
+
+There is a second way to ask for a summary, without touching the GUI: **send yourself a mail whose subject is `sum`**. The watcher notices it, tags it `Sum` and turns it into a report. Add letters after `sum` to choose the levels — `sum sabc` spells all four out, `sum sa` takes only S and A. A command mail is never classified itself.
+
 ### First run in five steps
 
 1. Open the app → **User info** → fill in `email` (plus `student_id`, `faculty`, `courses` if you can) → **Save**
-2. The **one-time Microsoft sign-in** may appear on first use (with the Graph backend): follow it in the browser once — see [Signing in to the mailbox](#signing-in-to-the-mailbox)
+2. The **one-time Microsoft sign-in** appears on first use (with the Graph backend): follow it in the browser once — see [One-time Microsoft sign-in](#one-time-microsoft-sign-in)
 3. **AI setting** → pick a backend → enter the API key → save
 4. The watcher **starts by itself** once the config is complete (the log shows `watching the inbox every 30s`)
 5. To preview first: tick **Dry run** → click **Categorize**; untick it once the levels look right
@@ -327,9 +322,7 @@ Exit codes: `0` success, `1` config or connection problem, `2` partial failure.
 | `selftest.py` `guitest.py` | Tests: `py -3 selftest.py` (pure logic, no mailbox/AI); `py -3 guitest.py` (GUI smoke test) |
 | `config.json` / `graph_token.json` / `watch_state.json` / `app.log` | **Created at runtime, contains your personal data — never redistribute** (already in `.gitignore`). `graph_token.json` holds the cached Microsoft sign-in credential. |
 
----
-
-## Troubleshooting
+### Troubleshooting
 
 | Symptom | What it means / what to do |
 |---|---|
@@ -337,6 +330,21 @@ Exit codes: `0` success, `1` config or connection problem, `2` partial failure.
 | The **device code expired** | The code is valid for about **15 minutes**. Restart the app to get a fresh code, then finish the sign-in without waiting. |
 | Sign-in worked but **mail cannot be read** | Check your network connection: the Graph backend needs internet access, unlike the old local COM path. |
 | You want to sign in **again / as another account** | Delete `graph_token.json` (next to `config.json`) to force a fresh sign-in. |
+| The legacy COM backend logs `Server execution failed` | You launched it with a **Low**-integrity process, which cannot reach Outlook Classic. Run `check_context.bat` and start the app normally, from a normal user session. |
+
+---
+
+## 4. Current version at a glance
+
+| Item | Detail |
+|---|---|
+| Version | **v2.0.3** |
+| Released | **2026-10-20** |
+| Repository | [MiKasss666/ai-email-manager](https://github.com/MiKasss666/ai-email-manager) (renamed from `hkust-ai-email-manager`; old links redirect) |
+| Mail backend | Microsoft Graph over HTTPS; the legacy Outlook Classic + COM backend is still available behind `"mail_source": "outlook"` |
+| Distribution | `EmailManager.zip` from [Releases](https://github.com/MiKasss666/ai-email-manager/releases/latest) — unzip and run `EmailManager.exe` |
+
+v2.0.3 is the current release: a Windows desktop assistant that reads your Microsoft mailbox through Microsoft Graph, sorts every mail into S / A / B / C, writes the level back as a category and emails you an HTML summary report when you ask for one. Nothing has to be installed besides the unzipped folder, and desktop Outlook plays no part in the default path — the only account step is a one-time Microsoft sign-in on first launch. Summary titles are links into Outlook on the web, so a click opens that exact message on a desktop, in the new Outlook or on a phone. Version history is kept in the git history and on the Releases page.
 
 ---
 
@@ -394,42 +402,7 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 
 **为香港科技大学（HKUST）学生开发** —— 用 AI 把收件箱自动分成 S / A / B / C 四级，并按需生成一份总结报告发给自己。程序通过 HTTPS 直接对接 **Microsoft Graph**，所以**不需要安装桌面版 Outlook**。课程代号、学院、宿舍关键词等默认值都按 HKUST 预置，换成别的学校只需在配置里改几个字段。
 
-本文四节：**前置要求 → 环境配置 → 运行分类逻辑 → 使用方法**，最后另加一节**故障排查**。
-
----
-
-## 版本更新 · v2.0.3
-
-- 总结邮件标题下面那行灰字说明（"点标题会在浏览器里打开 Outlook 网页版…"）已删除 —— 报告现在直接从级别分组开始。
-- 链接本身没有变化：点标题仍然会在 Outlook 网页版里打开那一封邮件，电脑、新版 Outlook、手机端都一样。
-
-## 版本更新 · v2.0.2
-
-- **修复：总结邮件里的链接点了没有任何反应。** 它用的是 `outlook:<EntryID>`，而 `outlook:` 不是 Windows 注册过的 URL 协议（经典版 Outlook 只认 `outlook:inbox` 这类固定命令），所以点击被静默忽略。
-- 现在标题改用 Microsoft Graph 为每封邮件提供的 **`webLink`**：点击会在浏览器里打开 **Outlook 网页版的那封邮件**。从经典版 Outlook、新版 Outlook、手机点开都可以。
-- 报告开头会说明这一点；拿不到网页版链接时，标题渲染成**纯文本**，而不是一个点不开的链接。
-
-## 版本更新 · v2.0.1
-
-v2.0.0 之上的补丁版 —— 全部是在修 v2.0.0 没做对的地方。
-
-- **修复：写回分类全部失败**，报 `HTTP 405 ... The OData request is not supported`。邮件 id 在两次归一化之间丢了，PATCH 打到没有 id 的 `/me/messages/` 上。读邮件是正常的，所以看起来像权限问题；红旗与 `Sum` 标签同样受影响。
-- **修复：你学院/系发来的邮件重新稳定为 A。** 学院身份藏在发件人**显示名**（`SCI/HOME, School of Science <advise@ust.hk>`）和**正文末尾的签名**里 —— 而提示词两者都没看到（正文被截断到开头 400 字符，显示名压根没送）。同一个发件人的 6 封邮件因此出现 A/B/C/S 四种级别。现在有一条确定性规则：我学院发来的 → **至少 A**。
-- **修复：S 重新等于"现在要动手"。** "N 天内有截止 → S"不再限定在 A 里（一份正文写着真实交表截止的校级申请原本停在 B）；**活动举办日期不算截止**（快开的讲座不是 S）；**已经过期**的降到 C。
-- **变更：课程邮件改为"至少 A"，不再一律顶成 S。** `lecture 12 has started!`、`Assignment Graded` 这类通知不再堆进 S；S 交回给"要动手 + 有截止"判断。
-- **变更：`urgent_days` 默认 30 → 14 天**，让 S 保持区分度。
-- **修复：失败的批次改为对半重试**（40 → 20+20 → …），不再因为一次坏回复把 40 封全丢掉。
-- **修复：活动日志不再每 30 秒重复打印 `connected as ...`**，并且已全英文。
-
-## 版本更新 · v2.0.0
-
-- **邮件后端从 Outlook COM 换成 Microsoft Graph。** **不再需要**桌面版（经典版）Outlook——没装、没开、没登录都能用。读取（收件箱、正文、分类、已读状态）与写入（写回 S/A/B/C 分类、红旗、发送总结邮件）全部通过 HTTPS 调用 Graph REST API 完成。
-- **用户唯一新增的步骤：首次启动时登录一次 Microsoft 账号。** 本地没有凭据时，程序会把**设备码打到 Activity log**、自动打开默认浏览器（网址里已带上设备码），并把设备码放进剪贴板。之后就无感了：凭据缓存在 `graph_token.json`，会自动续期。
-- **新增配置项**：`mail_source`（默认 `graph`，可设为 `outlook` 走旧后端）与 `graph` 段（`tenant`、`client_id`、`scopes`、`probe_scopes`、`open_browser`、`token_cache`）。详见 [第 2 节](#2-环境配置)。
-- **`pywin32` 变成可选依赖。** Graph 后端只用 Python 标准库；只有旧的 Outlook 后端才需要 `pywin32`。
-- **登录时申请的权限是 `Mail.ReadWrite`**（另外还有 `offline_access openid profile User.Read`）；只读自检只申请 `Mail.Read`。
-
-旧的 Outlook 经典版后端仍保留为回退方案：见[可选：旧版 Outlook 后端](#可选旧版-outlook-后端)。
+本文四节：**前置要求 → 核心分类逻辑与总结功能 → 使用方法 → 当前版本概览**。
 
 ---
 
@@ -453,6 +426,15 @@ v2.0.0 之上的补丁版 —— 全部是在修 v2.0.0 没做对的地方。
 | **邮箱账号** | 一个你能登录的 Microsoft / Microsoft 365 账号。**Outlook 不需要安装、不需要运行、也不需要登录。** |
 | **登录** | **首次启动时登录一次 Microsoft 账号**（OAuth2 设备码流程）。随时可以退出登录：删掉缓存的凭据即可，见[故障排查](#故障排查)。 |
 | **启动方式** | **必须以普通用户身份启动**：在文件资源管理器里双击，或从开始菜单启动。 |
+| **网络** | 必须能联网：邮箱是通过 HTTPS 调用 Microsoft Graph 这个云端 API 访问的。 |
+
+### 不需要什么
+
+| 不需要 | 原因 |
+|---|---|
+| 桌面版（经典版）Outlook | 邮件通过 HTTPS 走 Microsoft Graph 读写。Outlook 不需要安装、不需要运行、也不需要登录。 |
+| Python | 只有从源码运行时才需要。打包版就是解压出来的一个文件夹，里面有 `EmailManager.exe`。 |
+| 本机邮件服务器 / IMAP 配置 | 一个 Microsoft / Microsoft 365 账号就够了，程序里不需要配任何邮件客户端参数。 |
 
 ### 邮件后端
 
@@ -461,14 +443,27 @@ v2.0.0 之上的补丁版 —— 全部是在修 v2.0.0 没做对的地方。
 | **graph**（默认） | 通过 HTTPS 调用 Microsoft Graph REST API，只用 Python 标准库 | **不需要**——没装、没开、没登录都行 |
 | outlook（旧版） | 通过 COM 驱动 Outlook 经典版（需要 `pywin32`） | 需要 |
 
-在 `config.json` 里用 `mail_source` 切换；`graph` 段各字段见[第 2 节](#2-环境配置)。
+在 `config.json` 里用 `mail_source` 切换；`graph` 段各字段见[第 3 节](#3-使用方法)。
+
+### 一次性登录 Microsoft 账号
+
+用默认的 `graph` 后端时，程序只需要登录**一次**：
+
+1. 本地没有凭据时，程序会把**设备码单独一行打进 Activity log**（日志区右上角有 `Copy` 按钮）。
+2. 它会**自动打开默认浏览器**，打开的网址里已经带着设备码（`...?user_code=XXXX`），所以在登录页上通常只要确认一下。
+3. 它还会把设备码**放进剪贴板**，在登录页直接 `Ctrl+V` 就行。
+4. 之后它会等你（最长约 **15 分钟**），登录一完成就**自己继续**，不需要再点任何按钮。
+
+登录成功后凭据缓存在与 `config.json` 同目录的 `graph_token.json` 里，之后静默复用（refresh token，大约 90 天，滚动续期），日常使用不会再要求登录。删掉这个文件即等于退出登录——下次启动会重新要求登录一次。
+
+登录申请的权限是 **`Mail.ReadWrite`**（写回 S/A/B/C 分类必需），另外还有 `offline_access openid profile User.Read`；只读自检只申请 **`Mail.Read`**。若把 `graph.open_browser` 设为 `false`，浏览器不会自动弹出——设备码仍然会打进日志，手动输入即可。
 
 ### 运行方式（二选一）
 
 | 方式 | 入口 | 需要装什么 |
 |---|---|---|
 | **打包版** | `EmailManager\EmailManager.exe` | 什么都不用装。首次运行会被 SmartScreen 拦一下：点 `More info` → `Run anyway`。 |
-| **源码运行** | `start.bat` | Python 3.9+（`py -3 -m pip install -r requirements.txt` 会装上可选的 `pywin32`，只有旧版 Outlook 后端才用得到）。**没有 SmartScreen 提示**。 |
+| **源码运行** | `start.bat` | Python 3.9+（`py -3 -m pip install -r requirements.txt` 只装可选的 `pywin32`，旧版 Outlook 后端才用得到）。**没有 SmartScreen 提示**。 |
 
 ### 可选：旧版 Outlook 后端
 
@@ -510,7 +505,85 @@ v2.0.0 之上的补丁版 —— 全部是在修 v2.0.0 没做对的地方。
 
 ---
 
-## 2. 环境配置
+## 2. 核心分类逻辑与总结功能
+
+### 四个级别 + 一个标记
+
+| 级别 | 含义 | 颜色 |
+|---|---|---|
+| **S** | 必须马上动手，且截止日期在 `urgent_days`（默认 14 天）内：作业 / 表格 / 要交的材料、报名或缴费截止、考试时间 | 橙色 |
+| **A** | 重要且来源可信：你学院/系、宿舍、你选的课程、其它课程代号、官方教务事务 | 紫色 |
+| **B** | 要报名 / 申请 / 交东西：宣讲会、Co-op 与实习项目、工作坊、比赛、夏令营、交换申请、科研机会、研究生申请 | 蓝色 |
+| **C** | 什么都不用做的通知：每日活动汇总、新闻稿、讲座通知、图书馆开放时间、社团推广、已过期的通知 | 灰色 |
+| **Sum** | 程序自己的总结报告与 `sum` 指令邮件 | 黄色 |
+
+写回分类时**只替换本程序自己的标签**（`S`/`A`/`B`/`C`/`Sum`）：你自己定义的分类、以及服务器规则打上的分类会**原样保留**，重判也只换级别、不会层层叠加。S 级邮件只要截止日期落在 `urgent_days` 内，还会被插上**红旗**。程序从不删除你 Outlook 里的分类主列表条目。
+
+### 第 1 步 —— 是不是学校邮件
+
+每封邮件先过这一关。由 AI 判断"这封是不是学校邮件"；发件人域名命中 `school_domains`（默认 `ust.hk`）的，由代码直接认定，不问 AI。被判为**不是**学校邮件的，完全不贴标签、也不写回。
+
+这一关必须存在：学校事务经常由**外部平台代发** —— Canvas 通知、问卷、报名系统 —— 它们的域名不是学校的。只看域名会漏掉这一类，先判级别再问就更会把它们判错。
+
+### 第 2 步 —— S / A / B / C 四个级别
+
+- **S —— 有事情要动手，而且截止是真的。** S 的意思是"我必须做点什么，且截止日期在 `urgent_days`（默认 **14**）天内"：作业、表格、要交的材料、报名或缴费截止、考试时间。S **与发件人是谁无关** —— 一封校级申请只要正文里有真实的交表截止，同样算 S。**活动的举办日期不算截止日期**，**已经过期**的降到 C。
+- **至少 A，由代码判定。** 两条确定性规则只会把邮件**升到至少 A**，不会往下拉：邮件里出现了你选的课程（`courses`），或者邮件来自你自己的学院/系（`faculty`）。`faculty` 会拿发件人的显示名、地址、主题与正文去匹配 —— 学院的真实身份通常写在显示名里，例如 `SCI/HOME, School of Science <advise@ust.hk>`。
+- **A，其余重要邮件。** 宿舍 / 宿位邮件、别的课程代号、指名道姓写你名字或含你学号的邮件，以及官方教务事务：选课、考试、成绩、注册、缴费、表格、毕业、交换、图书馆到期通知。
+- **B —— 要报名 / 申请 / 交东西。** 宣讲会与 Co-op / 实习项目、工作坊、语言或心理辅导课程、比赛、夏令营与交换申请、科研机会、研究生申请。
+- **C —— 什么都不用做。** 通知类：每日活动汇总、新闻稿、讲座通知、图书馆开放时间、社团推广、已过期的通知。
+- **B 与 C 的分界线只有一个问题：** *我需不需要报名 / 申请 / 交东西？* 要 → B，只是通知 → C。
+
+### 判定顺序一览
+
+```
+step 1  先判断：是不是学校邮件？ → 不是学校邮件：不贴标签、也不写回
+        （发件人域名命中 `school_domains` 的，由代码直接认定，不问 AI）
+step 2  判级别，前一步命中即停止：
+        需要动手 + 截止日期在 `urgent_days` 天内        → S
+        命中你的 courses、或来自你 faculty  ★代码判定   → 至少 A
+        宿舍 / 别的课程代号 / 你的姓名或学号 /
+          官方教务事务                                  → A
+        需要报名 / 申请 / 交东西                        → B
+        什么都不用做的通知                              → C
+```
+
+- **第 1 步为什么要问 AI**：只看发件人域名会漏——学校事务经常由**外部平台代发**（Canvas 通知、问卷、报名系统…），域名不是学校的，内容却是学校事务。所以"是不是学校邮件"也交给 AI 按内容判断；只有域名命中的那一类由代码直接认定（确定性证据优先于 AI）。
+- **不是学校邮件的邮件一个字节都不写**：不贴 S/A/B/C、不动分类、不动红旗，也不算失败（不会触发重试）。这些邮件会被记进 `watch_state.json`，之后不再重复送 AI。
+- **只有三条是确定性规则**：`school_domains` 命中、`courses` 命中、`faculty` 命中——本地判断，不经过 AI；它们只会把级别往上抬。
+- **其余的级别判断由 AI 完成**：程序把这套规则写进提示词，由模型逐封判断。
+- 送给 AI 的每封邮件只包含：**发件人、主题、正文前 400 字符**。⚠️ 因为第 1 步要看内容，**收件箱里的邮件（只要还没被判定过）都会送进 AI**——介意隐私的话请把 AI 后端换成 `ollama` 等本地模型，或在 `config.json` 里不要配云端 Key。
+- 一次送 `batch_size` 封；模型返回的条数与请求**不一致时整批作废**——宁可漏判，也不允许错位贴错标签。
+
+### 总结报告
+
+1. 读最近 `summary_days` 天（默认 **7**）内已打 `S/A/B/C` 的邮件——命令里指定了级别，就只读那几个级别
+2. 按 `S → A → B → C` 分组
+3. 每封写一行要点：截止日期、课程代号、需要做什么（正文取前 800 字符，所以要点也能带上占比、公司名这类具体信息）
+4. 合成 HTML 报告 → 发到 `summary_recipient`（默认自己）
+5. 报告主题带标记（`邮件总结` / `Email summary`，跟随 `language`），程序据此认出自己的报告并打 `Sum` 标签，**不会被自己分级**
+
+**标题就是 Outlook 网页版的链接。** 报告里每个标题都会在 Outlook 网页版打开**那一封邮件**——用的是 Microsoft Graph 为每封邮件提供的 `webLink`——在电脑上、新版 Outlook 里、手机上点都一样。拿不到网页版链接的邮件，标题渲染成**纯文本**，而不是一个点不开的链接。
+
+**怎么触发：** 给自己发一封主题为 `sum` 的邮件（想挑级别就在后面加字母，如 `sum sabc`），或直接在界面里点 **Sum**。
+
+**要点不会整批空白**：要求模型返回"数量正好 N 个"的 JSON 数组，一旦响应被输出上限截断，旧做法会把整批丢掉。现在分三层兜底——捞回已完整的部分并只补剩下的 → 整批失败就劈半重试 → 最差只影响单封，日志会点名是哪一封。
+
+### 自动监听
+
+| 时机 | 行为 |
+|---|---|
+| 启动 | **配置齐全才开**（缺 `email` 或 AI 后端不可用就不开，日志逐条说明缺什么） |
+| 保存配置后 | 配置补全的**那一刻自动开启**，不用重启 |
+| 启动第一轮 | 按 `catchup_days` **补分类收件箱里存量的未分类邮件**，同时记录基线 |
+| 每 N 秒（默认 30） | 只处理"比上次记住的那封更新"的邮件 → 分级 |
+| 新邮件是 `sum` 指令 | 打 `Sum` 标签 → 生成总结报告 |
+| 我们自己的报告 | 每轮扫描"是报告但没打 `Sum` 标签"的并补上（历史遗漏也会补） |
+| 邮箱暂时连不上 | **不当作失败**：只提示一次、继续按 120 秒退避重试，一恢复就自动接上（Graph 连不上、旧后端连不上 Outlook，都走这条） |
+
+---
+
+## 3. 使用方法
 
 ### 配置文件在哪
 
@@ -524,7 +597,7 @@ v2.0.0 之上的补丁版 —— 全部是在修 v2.0.0 没做对的地方。
 - **界面里填（推荐）**：`User info` 填身份，`AI setting` 选后端填 Key
 - 直接编辑 `config.json`（保存后重新打开界面即可生效）
 
-`mail_source` 与 `graph` 段目前**没有界面入口**，只能**直接编辑 `config.json`**。首次登录后程序会在同目录生成凭据缓存 `graph_token.json`（见下文）；两者都是个人信息，且都已写进 `.gitignore`。
+`mail_source` 与 `graph` 段目前**没有界面入口**，只能**直接编辑 `config.json`**。首次登录后程序会在同目录生成凭据缓存 `graph_token.json`（见[一次性登录 Microsoft 账号](#一次性登录-microsoft-账号)）；两者都是个人信息，且都已写进 `.gitignore`。
 
 ### 身份字段
 
@@ -535,8 +608,8 @@ v2.0.0 之上的补丁版 —— 全部是在修 v2.0.0 没做对的地方。
 | `student_id` | 学号。正文里出现学号 → 判 A 级。 | 空 |
 | `school` | 学校名。**仅用于显示/署名**；判"是不是学校邮件"改用下面的 `school_domains`。 | `香港科技大学 (HKUST)` |
 | `school_domains` | **「是学校邮件」的确定性判据**：发件人域名命中这里（逗号分隔）→ 直接认定为学校邮件，不再问 AI。没命中**不代表不是**——学校事务常由外部平台代发，那一类由 AI 按内容判断。 | `ust.hk` |
-| `faculty` | 学院 / 系名，可逗号分隔多个。命中 → 判 A 级。 | 空 |
-| `courses` | 本学期课程代号，逗号分隔。**命中 → 直接判 S 级**（确定性规则，覆盖 AI）。 | 空 |
+| `faculty` | 学院 / 系名，可逗号分隔多个。命中 → **至少 A 级**。 | 空 |
+| `courses` | 本学期课程代号，逗号分隔。**命中 → 至少 A 级**（确定性规则，只会往上抬，不会往下拉）。 | 空 |
 | `faculty_keywords` | 额外的学院关键词。 | 空 |
 | `dorm_keywords` | 宿舍 / 宿位相关关键词。 | HKUST 常用词 |
 | `course_code_regex` | 课程代号正则，用于识别"别的课程"的邮件 → 判 A 级。 | `[A-Z]{2,4}\d{3,4}[A-Z]?` |
@@ -577,80 +650,6 @@ v2.0.0 之上的补丁版 —— 全部是在修 v2.0.0 没做对的地方。
 
 想用环境变量方式，把配置里的 `api_key` 留空即可（这样 Key 不落在文件里）。
 
-### 登录邮箱
-
-用默认的 `graph` 后端时，程序只需要登录**一次**：
-
-1. 本地没有凭据时，程序会把**设备码单独一行打进 Activity log**（日志区右上角有 `Copy` 按钮）。
-2. 它会**自动打开默认浏览器**，打开的网址里已经带着设备码（`...?user_code=XXXX`），所以在登录页上通常只要确认一下。
-3. 它还会把设备码**放进剪贴板**，在登录页直接 `Ctrl+V` 就行。
-4. 之后它会等你（最长约 **15 分钟**），登录一完成就**自己继续**，不需要再点任何按钮。
-
-登录成功后凭据缓存在与 `config.json` 同目录的 `graph_token.json` 里，之后静默复用（refresh token，大约 90 天，滚动续期），日常使用不会再要求登录。删掉这个文件即等于退出登录——下次启动会重新要求登录一次。
-
-登录申请的权限是 **`Mail.ReadWrite`**（写回 S/A/B/C 分类必需），另外还有 `offline_access openid profile User.Read`；只读自检只申请 **`Mail.Read`**。若把 `graph.open_browser` 设为 `false`，浏览器不会自动弹出——设备码仍然会打进日志，手动输入即可。
-
----
-
-## 3. 运行分类逻辑
-
-### 四个级别 + 一个标记
-
-| 级别 | 含义 | 颜色 |
-|---|---|---|
-| **S** | 必须马上处理：作业 / 考试 / 要交的材料 / 你选的课程 | 橙色 |
-| **A** | 重要，且来源可信：学院、宿舍、老师、其它课程 | 紫色 |
-| **B** | 值得一看：个人成长、讲座、实习、学习资源 | 蓝色 |
-| **C** | 其余：活动通知、推广、兜底 | 灰色 |
-| **Sum** | 程序自己的总结报告与 `sum` 指令邮件 | 黄色 |
-
-写回分类时**只替换本程序自己的标签**（`S`/`A`/`B`/`C`/`Sum`）：你自己定义的分类、以及服务器规则打上的分类会**原样保留**，重判也只换级别、不会层层叠加。程序从不删除你 Outlook 里的分类主列表条目。
-
-### 判定顺序（前一步命中即停止）
-
-```
-step-1 先问 AI：这封是不是学校邮件？发件人域名命中 school_domains 的由代码直接认定
-       └─ 不是学校邮件 → 完全不贴标签（Outlook 里保持原样）
-step0  邮件命中你填的 courses（课程代号）        → S   ★ 确定性规则，直接覆盖 AI 判断
-step1  来源可信（faculty / 宿舍 / 别的课程代号 / 你的姓名 / 学号） → A
-step2  step1 命中，且正文里的 deadline 在 urgent_days 天内 → A 升 S
-step3  属于个人成长 / 学习相关                  → B
-step4  其余                                      → C
-```
-
-- **step-1 为什么要问 AI**：只看发件人域名会漏——学校事务经常由**外部平台代发**（Canvas 通知、问卷、报名系统…），域名不是学校的，内容却是学校事务。所以"是不是学校邮件"也交给 AI 按内容判断；只有域名命中的那一类由代码直接认定（确定性证据优先于 AI）。
-- **不是学校邮件的邮件一个字节都不写**：不贴 S/A/B/C、不动分类、不动红旗，也不算失败（不会触发重试）。这些邮件会被记进 `watch_state.json`，之后不再重复送 AI。
-- **只有 step0 和"域名命中"是确定性规则**：本地判断，不经过 AI，也就不会判错。
-- **step-1 / step1–step4 由 AI 完成**：程序把这套规则写进提示词，由模型逐封判断。
-- 送给 AI 的每封邮件只包含：**发件人、主题、正文前 400 字符**。⚠️ 因为 step-1 要看内容，**收件箱里的邮件（只要还没被判定过）都会送进 AI**——介意隐私的话请把 AI 后端换成 `ollama` 等本地模型，或在 `config.json` 里不要配云端 Key。
-- 一次送 `batch_size` 封；模型返回的条数与请求**不一致时整批作废**——宁可漏判，也不允许错位贴错标签。
-
-### 总结流程
-
-1. 读最近 `summary_days` 天内已打 `S/A/B/C` 的邮件
-2. 按 `S → A → B → C` 分组
-3. 每封生成一句要点（正文取前 800 字符，让要点能带上**截止日期、课程代号、占比、公司名**等具体信息）
-4. 合成 HTML 报告 → 发到 `summary_recipient`（默认自己）
-5. 报告主题带标记（`邮件总结` / `Email summary`，跟随 `language`），程序据此认出自己的报告并打 `Sum` 标签，**不会被自己分级**
-
-**要点不会整批空白**：要求模型返回"数量正好 N 个"的 JSON 数组，一旦响应被输出上限截断，旧做法会把整批丢掉。现在分三层兜底——捞回已完整的部分并只补剩下的 → 整批失败就劈半重试 → 最差只影响单封，日志会点名是哪一封。
-
-### 自动监听
-
-| 时机 | 行为 |
-|---|---|
-| 启动 | **配置齐全才开**（缺 `email` 或 AI 后端不可用就不开，日志逐条说明缺什么） |
-| 保存配置后 | 配置补全的**那一刻自动开启**，不用重启 |
-| 启动第一轮 | 按 `catchup_days` **补分类收件箱里存量的未分类邮件**，同时记录基线 |
-| 每 N 秒（默认 30） | 只处理"比上次记住的那封更新"的邮件 → 分级 |
-| 新邮件是 `sum` 指令 | 打 `Sum` 标签 → 生成总结报告 |
-| 我们自己的报告 | 每轮扫描"是报告但没打 `Sum` 标签"的并补上（历史遗漏也会补） |
-| 邮箱暂时连不上 | **不当作失败**：只提示一次、继续按 120 秒退避重试，一恢复就自动接上（Graph 连不上、旧后端连不上 Outlook，都走这条） |
-
----
-
-## 4. 使用方法
-
 ### 界面控件
 
 | 控件 | 作用 |
@@ -671,10 +670,14 @@ step4  其余                                      → C
 
 程序是**单实例**的：第二次启动会提示"已经在运行"并直接退出。两个实例会各自开一份监听、同时给同一个邮箱写分类（标签互相覆盖），所以必须挡住。
 
+### `sum` 邮件指令
+
+除了界面按钮，还有第二种要总结的方式：**给自己发一封主题为 `sum` 的邮件**。监听发现它之后会打上 `Sum` 标签，把它变成一份报告。主题后面可以跟字母挑级别——`sum sabc` 是把四级写全，`sum sa` 则只要 S 和 A。这封指令邮件本身永远不会被分级。
+
 ### 首次使用五步
 
 1. 打开程序 → **User info** 填 `email`（建议把 `student_id`、`faculty`、`courses` 一起填上）→ **Save**
-2. 用 Graph 后端时，首次使用可能会弹出**一次性的 Microsoft 登录**：跟着浏览器完成一次即可，见[登录邮箱](#登录邮箱)
+2. 用 Graph 后端时，首次使用会出现**一次性的 Microsoft 登录**：跟着浏览器完成一次即可，见[一次性登录 Microsoft 账号](#一次性登录-microsoft-账号)
 3. **AI setting** 选后端 → 填 API Key → 保存
 4. 配置齐全后**监听会自动开启**（日志出现 `watching the inbox every 30s`）
 5. 想先看效果：勾 **Dry run** → 点 **Categorize**，确认判级合理后取消 Dry run 再正式跑
@@ -703,9 +706,7 @@ py -3 run.py summarize [letters]  # 生成并发送总结报告；letters 如 s 
 | `selftest.py` `guitest.py` | 测试：`py -3 selftest.py` 纯逻辑自测（不连邮箱、不调 AI）；`py -3 guitest.py` 界面冒烟 |
 | `config.json` / `graph_token.json` / `watch_state.json` / `app.log` | **运行时生成，含你的个人信息，不要一起分发**（已在 `.gitignore` 里排除）。`graph_token.json` 里是登录 Microsoft 的凭据缓存。 |
 
----
-
-## 故障排查
+### 故障排查
 
 | 现象 | 原因 / 怎么办 |
 |---|---|
@@ -713,6 +714,21 @@ py -3 run.py summarize [letters]  # 生成并发送总结报告；letters 如 s 
 | **设备码过期** | 设备码有效期约 **15 分钟**。重启程序拿一个新码，然后尽快完成登录。 |
 | 登录成功了但**读不到邮件** | 检查网络：Graph 后端需要联网，这一点和旧的本地 COM 路径不同。 |
 | 想**换账号 / 重新登录** | 删掉 `graph_token.json`（与 `config.json` 同目录）即可强制重新登录。 |
+| 旧 COM 后端日志里出现 `Server execution failed` | 你在 **Low** 完整性进程里启动了程序，连不上 Outlook 经典版。跑一次 `check_context.bat`，然后从普通用户会话正常启动程序。 |
+
+---
+
+## 4. 当前版本概览
+
+| 项 | 内容 |
+|---|---|
+| 版本 | **v2.0.3** |
+| 发布日期 | **2026-10-20** |
+| 仓库 | [MiKasss666/ai-email-manager](https://github.com/MiKasss666/ai-email-manager)（原名 `hkust-ai-email-manager`，旧链接会自动跳转） |
+| 邮件后端 | 通过 HTTPS 调用 Microsoft Graph；旧的 Outlook 经典版 + COM 后端仍保留，设 `"mail_source": "outlook"` 即可切回 |
+| 分发方式 | 从 [Releases](https://github.com/MiKasss666/ai-email-manager/releases/latest) 下载 `EmailManager.zip`，解压后运行 `EmailManager.exe` |
+
+v2.0.3 是当前版本：一个 Windows 桌面程序，通过 Microsoft Graph 读取你的 Microsoft 邮箱，把每封邮件判成 S / A / B / C、把级别写回分类，并在你需要时给你发一封 HTML 总结报告。除了解压出来的文件夹之外不需要安装任何东西，默认路径也完全不碰桌面版 Outlook——唯一需要你参与的账号步骤，是首次启动时登录一次 Microsoft 账号。总结报告里的标题是指向 Outlook 网页版的链接，点一下就会在电脑、新版 Outlook 或手机上打开那一封邮件。版本历史保留在 git 提交记录与 Releases 页面里。
 
 ---
 
