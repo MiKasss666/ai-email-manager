@@ -167,13 +167,6 @@ def build_html(emails: Sequence[Dict[str, Any]], points: Sequence[str], cfg: Con
         f"<h2 style='margin:0 0 4px 0;'>{title} · {scope}</h2>",
         f"<p style='margin:0 0 8px 0;color:#888;'>{total}</p>",
     ]
-    if any(str(email.get("web_link") or "").strip() for email in emails):
-        hint = ("Clicking a title opens that mail in Outlook on the web (a browser tab) — "
-                "classic Outlook cannot be deep-linked to a single message."
-                if en else
-                "点标题会在浏览器里打开 Outlook 网页版的那封邮件 —— "
-                "经典版 Outlook 没有能深链到单封邮件的链接协议。")
-        html.append(f"<p style='margin:0 0 10px 0;color:#888;font-size:12px;'>{hint}</p>")
 
     current = None
     for email, point in zip(emails, points):

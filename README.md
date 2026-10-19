@@ -22,6 +22,11 @@ Four sections: **Prerequisites → Configuration → Classification logic → Us
 
 ---
 
+## What's new in v2.0.3
+
+- The grey line under the summary header ("clicking a title opens Outlook on the web…") is gone — the report now goes straight to the level sections.
+- The links themselves are unchanged: a title still opens that exact message in Outlook on the web, on desktop, in the new Outlook, and on a phone.
+
 ## What's new in v2.0.2
 
 - **Fixed: the links in the summary email did nothing when clicked.** They used `outlook:<entry id>`, and `outlook:` is not a registered Windows URL scheme (classic Outlook only understands fixed commands such as `outlook:inbox`), so clicks were silently ignored.
@@ -392,6 +397,11 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 本文四节：**前置要求 → 环境配置 → 运行分类逻辑 → 使用方法**，最后另加一节**故障排查**。
 
 ---
+
+## 版本更新 · v2.0.3
+
+- 总结邮件标题下面那行灰字说明（"点标题会在浏览器里打开 Outlook 网页版…"）已删除 —— 报告现在直接从级别分组开始。
+- 链接本身没有变化：点标题仍然会在 Outlook 网页版里打开那一封邮件，电脑、新版 Outlook、手机端都一样。
 
 ## 版本更新 · v2.0.2
 
