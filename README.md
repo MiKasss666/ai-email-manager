@@ -8,13 +8,13 @@
 
 ## ⬇️ Just want to use it? Download here
 
-> ### 👉 **[Download the packaged build — EmailManager.zip](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest)** 👈
+> ### 👉 **[Download the packaged build — EmailManager.zip](https://github.com/MiKasss666/ai-email-manager/releases/latest)** 👈
 >
 > Unzip → double-click `EmailManager.exe`. **No Python required.**
 
 > ⚠️ **Don't use the green `Code` → `Download ZIP` button**
 > That downloads the **source code** (29 files, ~435 KB, **no exe**, nothing happens when you double-click); it is only for developers who want to modify the code.
-> Regular users should use the **Download** link above, or grab `EmailManager.zip` (13 MB) from [Releases](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest).
+> Regular users should use the **Download** link above, or grab `EmailManager.zip` (13 MB) from [Releases](https://github.com/MiKasss666/ai-email-manager/releases/latest).
 
 **Built for students at HKUST (Hong Kong University of Science and Technology)** — an AI assistant that sorts your mailbox into S / A / B / C and emails you a summary report on demand. It talks to **Microsoft Graph** over HTTPS, so **desktop Outlook is not required**. Course codes, school and dorm keywords ship pre-filled for HKUST; other schools only need a few config changes.
 
@@ -63,7 +63,7 @@ The legacy Outlook Classic backend is still available as a fallback — see [Opt
 
 | Option | What to do | For |
 |---|---|---|
-| **Download the build** | Grab `EmailManager.zip` from [Releases](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest), unzip, run `EmailManager.exe` | No Python needed |
+| **Download the build** | Grab `EmailManager.zip` from [Releases](https://github.com/MiKasss666/ai-email-manager/releases/latest), unzip, run `EmailManager.exe` | No Python needed |
 | **Build it yourself** | Clone → install Python → double-click `build.bat` | You want to modify the code |
 | **Run from source** | Clone → install Python → double-click `start.bat` | Quick iteration |
 
@@ -370,7 +370,7 @@ already outside the terms of the licence.**
 ### How to cite
 
 > This project uses Email Manager by pkfok@hkust (HKUST),
-> available at https://github.com/MiKasss666/hkust-ai-email-manager
+> available at https://github.com/MiKasss666/ai-email-manager
 
 A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 **"Cite this repository"** button in the sidebar.
@@ -384,13 +384,13 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 
 ## ⬇️ 只是想用？点这里下载
 
-> ### 👉 **[下载打包版 EmailManager.zip](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest)** 👈
+> ### 👉 **[下载打包版 EmailManager.zip](https://github.com/MiKasss666/ai-email-manager/releases/latest)** 👈
 >
 > 解压 → 双击 `EmailManager.exe` → 完事。**不需要安装 Python。**
 
 > ⚠️ **别点右上角绿色的 `Code` → `Download ZIP`**
 > 那个下载的是**源码**（29 个文件 / 约 435 KB，里面**没有 exe**，双击没反应），只有想改代码的开发者才需要。
-> 普通用户请用上面那个 **Download** 链接，或到 [Releases](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest) 页面下载 `EmailManager.zip`（13 MB）。
+> 普通用户请用上面那个 **Download** 链接，或到 [Releases](https://github.com/MiKasss666/ai-email-manager/releases/latest) 页面下载 `EmailManager.zip`（13 MB）。
 
 **为香港科技大学（HKUST）学生开发** —— 用 AI 把收件箱自动分成 S / A / B / C 四级，并按需生成一份总结报告发给自己。程序通过 HTTPS 直接对接 **Microsoft Graph**，所以**不需要安装桌面版 Outlook**。课程代号、学院、宿舍关键词等默认值都按 HKUST 预置，换成别的学校只需在配置里改几个字段。
 
@@ -439,7 +439,7 @@ v2.0.0 之上的补丁版 —— 全部是在修 v2.0.0 没做对的地方。
 
 | 方式 | 怎么做 | 适合 |
 |---|---|---|
-| **下载打包版** | 到 [Releases](https://github.com/MiKasss666/hkust-ai-email-manager/releases/latest) 下载 `EmailManager.zip`，解压后运行里面的 `EmailManager.exe` | 不想装 Python 的人 |
+| **下载打包版** | 到 [Releases](https://github.com/MiKasss666/ai-email-manager/releases/latest) 下载 `EmailManager.zip`，解压后运行里面的 `EmailManager.exe` | 不想装 Python 的人 |
 | **自己打包** | 克隆仓库 → 装好 Python → 双击 `build.bat` | 想改代码的人 |
 | **直接跑源码** | 克隆仓库 → 装好 Python → 双击 `start.bat` | 改完立刻试 |
 
@@ -744,7 +744,7 @@ py -3 run.py summarize [letters]  # 生成并发送总结报告；letters 如 s 
 ### 引用格式
 
 > 本项目使用了 Email Manager（作者 pkfok@hkust，HKUST），
-> 仓库地址：https://github.com/MiKasss666/hkust-ai-email-manager
+> 仓库地址：https://github.com/MiKasss666/ai-email-manager
 
 仓库里还有一份机器可读的 [CITATION.cff](CITATION.cff) —— GitHub 会据此在侧边栏显示
 「**Cite this repository**」按钮，点一下就能复制标准引用格式。

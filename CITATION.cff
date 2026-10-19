@@ -8,8 +8,8 @@ authors:
 version: 2.0.3
 date-released: 2026-10-20
 license: MIT
-repository-code: "https://github.com/MiKasss666/hkust-ai-email-manager"
-url: "https://github.com/MiKasss666/hkust-ai-email-manager"
+repository-code: "https://github.com/MiKasss666/ai-email-manager"
+url: "https://github.com/MiKasss666/ai-email-manager"
 keywords:
   - microsoft-graph
   - outlook
