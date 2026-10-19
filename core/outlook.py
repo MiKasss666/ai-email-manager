@@ -716,7 +716,23 @@ def message_info(msg) -> Dict[str, Any]:
         "sender": _read("SenderEmailAddress", ""),
         "body": str(body or "").strip(),
         "received": _naive(_read("ReceivedTime")),
+        "web_link": _web_link(msg),
     }
+
+
+def _web_link(msg) -> str:
+    """邮件的「在 Outlook 网页版打开」链接；取不到返回空串。
+
+    经典版 Outlook 自己没有能深链到某一封邮件的 URL 协议（`outlook:` 只认
+    inbox / calendar 这类固定命令），所以报告里点标题只能打开网页版。
+    OWA 链接既不在 COM 对象上、也不在 EntryID 里 —— 只有 Graph 后端的
+    `webLink` 字段能给出，所以 COM 后端这里老实返回空串，让报告退化成纯文本。
+    """
+    try:
+        value = getattr(msg, "WebLink", None)
+    except Exception:
+        return ""
+    return str(value or "").strip()
 
 
 def sender_address(msg) -> str:
@@ -862,6 +878,9 @@ def read_recent(ns, *, days: int, letters: str = "sabc") -> List[Dict[str, Any]]
             "sender": msg.SenderName or msg.SenderEmailAddress or "",
             "body": (msg.Body or "").strip(),
             "received": received,
+            # COM 没有「在网页版打开这封邮件」的链接；取不到就留空，
+            # 报告里对应标题会退化成纯文本（不再生成点不动的假链接）。
+            "web_link": _web_link(msg),
         })
 
     out.sort(key=lambda e: LEVELS.index(e["level"]))  # 稳定排序 → 组内保持时间降序

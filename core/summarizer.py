@@ -167,6 +167,13 @@ def build_html(emails: Sequence[Dict[str, Any]], points: Sequence[str], cfg: Con
         f"<h2 style='margin:0 0 4px 0;'>{title} · {scope}</h2>",
         f"<p style='margin:0 0 8px 0;color:#888;'>{total}</p>",
     ]
+    if any(str(email.get("web_link") or "").strip() for email in emails):
+        hint = ("Clicking a title opens that mail in Outlook on the web (a browser tab) — "
+                "classic Outlook cannot be deep-linked to a single message."
+                if en else
+                "点标题会在浏览器里打开 Outlook 网页版的那封邮件 —— "
+                "经典版 Outlook 没有能深链到单封邮件的链接协议。")
+        html.append(f"<p style='margin:0 0 10px 0;color:#888;font-size:12px;'>{hint}</p>")
 
     current = None
     for email, point in zip(emails, points):
@@ -179,7 +186,16 @@ def build_html(emails: Sequence[Dict[str, Any]], points: Sequence[str], cfg: Con
             html.append("<div>")
 
         lines = [f"<div>[{current}] <b>{_esc(email.get('sender'))}</b></div>"]
-        lines.append(f"<div><a href='outlook:{email.get('entryid')}'>{_esc(email.get('subject'))}</a></div>")
+        # 只有真的拿到「网页版打开这封邮件」的链接才做成可点击的，否则纯文本。
+        # 旧实现用的是 `outlook:<EntryID>` —— 那不是 Windows 注册的协议
+        # （经典版 Outlook 的 `outlook:` 只认 inbox / calendar 这类固定命令），
+        # 点上去没有任何反应，用户反馈过。
+        _subject = _esc(email.get("subject"))
+        _link = str(email.get("web_link") or "").strip()
+        if _link:
+            lines.append(f"<div><a href='{_esc(_link)}'>{_subject}</a></div>")
+        else:
+            lines.append(f"<div>{_subject}</div>")
         if point:
             lines.append(f"<div>{_esc(point)}</div>")
         received = email.get("received")

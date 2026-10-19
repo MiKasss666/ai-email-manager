@@ -416,12 +416,17 @@ check("label_for 英文", summarizer.label_for("sa", True) == "S+A levels")
 
 samples = [
     {"entryid": "AAA111", "level": "S", "subject": "作业 <重要> & 紧急",
-     "sender": "Prof. A", "body": "b", "received": datetime(2026, 3, 1, 9, 30)},
+     "sender": "Prof. A", "body": "b", "received": datetime(2026, 3, 1, 9, 30),
+     "web_link": "https://outlook.office.com/mail/deeplink/read/AAA111"},
     {"entryid": "BBB222", "level": "C", "subject": "Newsletter",
      "sender": "Shop", "body": "b", "received": datetime(2026, 3, 2, 8, 0)},
 ]
 html = summarizer.build_html(samples, ["要点一", ""], cfg, "sc")
-check("HTML 含可点开链接", "outlook:AAA111" in html and "outlook:BBB222" in html)
+check("有网页版链接时标题可点击",
+      "https://outlook.office.com/mail/deeplink/read/AAA111" in html)
+check("不再生成点不动的 outlook: 假链接", "outlook:" not in html)
+check("拿不到链接时标题退化成纯文本（不生成空 href）",
+      "<a href=''>" not in html and "Newsletter" in html)
 check("HTML 转义主题尖括号", "&lt;重要&gt;" in html and "&amp;" in html)
 check("HTML 分级标题", "【S】" in html and "【C】" in html)
 check("HTML 块数正确（2 封各一个 div 块）", html.count("border-bottom:1px solid #e6e6e6") == 2)
@@ -1084,6 +1089,11 @@ check("Graph 邮件归一：主题 / 发件人 / id / 分类",
 check("Graph 邮件归一：HTML 压成纯文本", "soon" in _info["body"] and "<" not in _info["body"])
 check("Graph 邮件归一：时间是本地 naive",
       _info["received"] is not None and _info["received"].tzinfo is None)
+check("Graph 邮件归一：带出网页版链接 web_link",
+      graph_mod.normalize(dict(_raw, webLink="https://outlook.office.com/x"))["web_link"]
+      == "https://outlook.office.com/x")
+check("没有 webLink 时 web_link 是空串（报告会退化成纯文本）",
+      _info["web_link"] == "")
 
 _str_body = dict(_raw)
 _str_body["body"] = "plain text body"

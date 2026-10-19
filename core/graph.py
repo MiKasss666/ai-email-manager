@@ -71,7 +71,7 @@ FALLBACK_CLIENTS: Tuple[Tuple[str, str], ...] = (
 )
 
 SELECT = ("id,subject,from,sender,receivedDateTime,categories,isRead,hasAttachments,"
-          "bodyPreview,body,conversationId")
+          "bodyPreview,body,conversationId,webLink")
 RECENT_MAX = 200          # 一次最多取多少封（收件箱扫描窗口）
 RECENT_TTL = 10           # 同一轮监听里多个查询共用一次请求
 
@@ -410,6 +410,10 @@ def normalize(message: Dict[str, Any]) -> Dict[str, Any]:
         "received": when,
         "categories": list(categories) if isinstance(categories, list) else [],
         "is_read": bool(message.get("isRead")),
+        # 微软给的「在 Outlook 网页版里打开这封邮件」链接，总结报告的标题指向它。
+        # 经典版 Outlook 没有能深链到某封邮件的 URL 协议（`outlook:` 只认 inbox/calendar
+        # 这类固定命令，带 EntryID 会被直接忽略），所以点标题打开的是网页版。
+        "web_link": str(message.get("webLink") or ""),
     }
 
 
@@ -434,6 +438,7 @@ class GraphMessage:
         self.Categories = ", ".join(info["categories"])
         self.UnRead = not info["is_read"]
         self.FlagStatus = (raw.get("flag") or {}).get("flagStatus")
+        self.web_link = info["web_link"]
         self.level_hint = next((c for c in info["categories"] if c in LEVELS), None)
 
     def __repr__(self) -> str:
@@ -657,6 +662,7 @@ def read_recent(ns: GraphSession, *, days: int, letters: str = "sabc") -> List[D
             "subject": msg.Subject or "(no subject)",
             "sender": msg.SenderName or msg.SenderEmailAddress or "",
             "body": msg.Body or "", "received": msg.ReceivedTime,
+            "web_link": msg.web_link,
         })
     rows.sort(key=lambda item: LEVELS.index(item["level"]))
     return rows

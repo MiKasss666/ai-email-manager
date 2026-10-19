@@ -22,6 +22,12 @@ Four sections: **Prerequisites → Configuration → Classification logic → Us
 
 ---
 
+## What's new in v2.0.2
+
+- **Fixed: the links in the summary email did nothing when clicked.** They used `outlook:<entry id>`, and `outlook:` is not a registered Windows URL scheme (classic Outlook only understands fixed commands such as `outlook:inbox`), so clicks were silently ignored.
+- Titles in the summary now use the **`webLink`** Microsoft Graph provides for every message: clicking one opens **that message in Outlook on the web**, in your browser. It works from classic Outlook, the new Outlook, a phone, anywhere.
+- The report says so at the top, and when a message has no web link the title is rendered as **plain text** instead of a link that leads nowhere.
+
 ## What's new in v2.0.1
 
 A patch release on top of v2.0.0 — all of it is fixing things that v2.0.0 got wrong.
@@ -386,6 +392,12 @@ A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
 本文四节：**前置要求 → 环境配置 → 运行分类逻辑 → 使用方法**，最后另加一节**故障排查**。
 
 ---
+
+## 版本更新 · v2.0.2
+
+- **修复：总结邮件里的链接点了没有任何反应。** 它用的是 `outlook:<EntryID>`，而 `outlook:` 不是 Windows 注册过的 URL 协议（经典版 Outlook 只认 `outlook:inbox` 这类固定命令），所以点击被静默忽略。
+- 现在标题改用 Microsoft Graph 为每封邮件提供的 **`webLink`**：点击会在浏览器里打开 **Outlook 网页版的那封邮件**。从经典版 Outlook、新版 Outlook、手机点开都可以。
+- 报告开头会说明这一点；拿不到网页版链接时，标题渲染成**纯文本**，而不是一个点不开的链接。
 
 ## 版本更新 · v2.0.1
 
