@@ -437,6 +437,34 @@ check("HTML 为空列表时也不崩",
 check("主题含识别标记（跟随 language，见 [11] 节的中英双标记测试）",
       outlook.is_report_subject(summarizer.build_subject("sa", cfg)))
 
+# 界面上的 Scope（last N days）对 Sum 也生效：build_subject / build_html 都要能收这个天数
+check("报告主题可用界面 Scope 的天数覆盖",
+      "last 3 days" in summarizer.build_subject("sabc", config.from_dict({"language": "en"}), 3)
+      and "最近3天" in summarizer.build_subject("sabc", config.from_dict({"language": "zh"}), 3))
+check("报告标题同样跟随界面 Scope",
+      "last 3 days" in summarizer.build_html(samples, ["", ""],
+                                             config.from_dict({"language": "en"}), "sc", 3))
+check("不传天数时仍用配置的 summary_days",
+      "last 7 days" in summarizer.build_subject(
+          "sabc", config.from_dict({"language": "en", "summary_days": 7})))
+
+_saved_connect = summarizer.outlook.connect
+_saved_recent = summarizer.outlook.read_recent
+_seen = {}
+try:
+    summarizer.outlook.connect = lambda log=None: (object(), object())
+    summarizer.outlook.read_recent = \
+        lambda ns, *, days, letters: (_seen.update(days=days, letters=letters), [])[1]
+    _count = summarizer.summarize_inbox(
+        config.from_dict({"email": "a@b.c", "summary_days": 7}),
+        "sa", days=2, log=lambda *a: None)
+    check("手动 Sum 时按界面 Scope 取数（days=2，而不是配置里的 7）",
+          _seen.get("days") == 2 and _count == 0)
+    check("取数级别仍然按参数走", _seen.get("letters") == "sa")
+finally:
+    summarizer.outlook.connect = _saved_connect
+    summarizer.outlook.read_recent = _saved_recent
+
 print("[5] ai 后端")
 check("endpoint 正常拼接",
       ai._endpoint("https://a.com/v1", "/chat/completions") == "https://a.com/v1/chat/completions")

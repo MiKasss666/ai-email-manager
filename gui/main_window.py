@@ -413,10 +413,13 @@ class MainWindow:
             return
 
         cfg = self.cfg
+        # Scope 对两个按钮都生效：手动点 Sum 时以界面上的天数为准
+        # （之前只传了 config 里的 summary_days，界面设 1 天却按 7 天扫，行为不一致）
+        days = self._days_int()
         self.log.write("")
-        self.log.write("=== Sum started (all levels S+A+B+C) ===")
+        self.log.write(f"=== Sum started (all levels S+A+B+C, last {days} day(s)) ===")
         started = self.runner.run(
-            lambda: summarizer.summarize_inbox(cfg, "sabc", log=self.log.write),
+            lambda: summarizer.summarize_inbox(cfg, "sabc", days=days, log=self.log.write),
             on_done=self._on_sum_done,
             on_error=self._on_task_error,
         )

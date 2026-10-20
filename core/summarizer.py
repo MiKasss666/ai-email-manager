@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from . import ai, mail as outlook
 from .config import Config
@@ -154,12 +154,17 @@ def summarize_points(emails: Sequence[Dict[str, Any]], cfg: Config,
 
 # ── HTML 报告 ─────────────────────────────────────────────────────
 def build_html(emails: Sequence[Dict[str, Any]], points: Sequence[str], cfg: Config,
-               letters: str) -> str:
-    """按级别分组生成 HTML：每封一块（级别+发件人 / 主题链接 / 要点 / 时间）。"""
+               letters: str, days: Optional[int] = None) -> str:
+    """按级别分组生成 HTML：每封一块（级别+发件人 / 主题链接 / 要点 / 时间）。
+
+    days：这份报告覆盖多少天（界面上手动点 Sum 时以 Scope 为准）；None → 用配置的
+    summary_days。报告标题里显示的 `· last N days` 就是这个值。
+    """
     en = cfg.is_english
+    window = days or cfg.summary_days
     title = f"📬 Email summary（{label_for(letters, en)}）" if en \
         else f"📬 邮件总结（{label_for(letters, en)}）"
-    scope = f"last {cfg.summary_days} days" if en else f"最近 {cfg.summary_days} 天"
+    scope = f"last {window} days" if en else f"最近 {window} 天"
     total = f"{len(emails)} messages" if en else f"共 {len(emails)} 封"
 
     html = [
@@ -205,39 +210,49 @@ def build_html(emails: Sequence[Dict[str, Any]], points: Sequence[str], cfg: Con
     return "\n".join(html)
 
 
-def build_subject(letters: str, cfg: Config) -> str:
+def build_subject(letters: str, cfg: Config, days: Optional[int] = None) -> str:
     """报告邮件主题。标记跟随 language —— 因为 outlook.is_report_subject()
     中英两个标记都认，所以切换语言之后历史报告仍然能被识别、不会被误分级。
+
+    days：这份报告覆盖多少天。界面上手动点 Sum 时用界面里的 Scope 值，
+    后台按 `sum` 指令触发时传 None → 用配置里的 summary_days。
     """
+    window = days or cfg.summary_days
     label = label_for(letters, cfg.is_english)
     if cfg.is_english:
-        return f"📬 {outlook.REPORT_SUBJECT_MARK_EN} ({label}) · last {cfg.summary_days} days"
-    return f"📬 {outlook.REPORT_SUBJECT_MARK}（{label}）· 最近{cfg.summary_days}天"
+        return f"📬 {outlook.REPORT_SUBJECT_MARK_EN} ({label}) · last {window} days"
+    return f"📬 {outlook.REPORT_SUBJECT_MARK}（{label}）· 最近{window}天"
 
 
 # ── 发送 ──────────────────────────────────────────────────────────
 def send_report(app, ns, cfg: Config, emails: Sequence[Dict[str, Any]],
-                points: Sequence[str], letters: str) -> str:
+                points: Sequence[str], letters: str,
+                days: Optional[int] = None) -> str:
     """生成并发出报告邮件，返回主题。"""
-    subject = build_subject(letters, cfg)
+    subject = build_subject(letters, cfg, days)
     outlook.ensure_sum_category(ns)
-    outlook.send_html(app, cfg.recipient, subject, build_html(emails, points, cfg, letters),
+    outlook.send_html(app, cfg.recipient, subject,
+                      build_html(emails, points, cfg, letters, days),
                       categories=outlook.SUM_NAME)
     return subject
 
 
 # ── 端到端入口 ────────────────────────────────────────────────────
 def summarize_inbox(cfg: Config, letters: str = "sabc", *,
+                    days: Optional[int] = None,
                     log: Callable[..., None] = print) -> int:
     """连接 → 读最近 N 天已分级邮件 → 生成要点 → 发报告给自己。
 
+    days=None 时用配置里的 `summary_days`；界面上的 Scope 会显式传进来
+    （手动点 Sum 时以界面为准 —— 之前这个值只管 Categorize，两个按钮行为不一致）。
     返回整理的邮件数；0 表示没有匹配邮件，不会发送任何东西。
     """
     letters = parse_letters(letters)
+    window = int(days or cfg.summary_days)
     app, ns = outlook.connect(log=log)
 
-    log(f"scanning the last {cfg.summary_days} day(s), levels: {letters.upper()} ...")
-    emails = outlook.read_recent(ns, days=cfg.summary_days, letters=letters)
+    log(f"scanning the last {window} day(s), levels: {letters.upper()} ...")
+    emails = outlook.read_recent(ns, days=window, letters=letters)
     log(f"matched {len(emails)} mail(s)")
     if not emails:
         log("nothing to summarise, no report sent.")
@@ -246,6 +261,6 @@ def summarize_inbox(cfg: Config, letters: str = "sabc", *,
     log("writing one line per mail ...")
     points = summarize_points(emails, cfg, log=log)
 
-    subject = send_report(app, ns, cfg, emails, points, letters)
+    subject = send_report(app, ns, cfg, emails, points, letters, window)
     log(f"sent to {cfg.recipient}: {subject}")
     return len(emails)

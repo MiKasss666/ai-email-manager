@@ -314,6 +314,43 @@ def main() -> int:
     app.watcher.stop()
     app.watcher._errors = 0
 
+    # ── 3e. Scope 天数对 Sum 也生效 ───────────────────────────
+    print("[3e] Scope 天数对 Sum 也生效")
+    from core import summarizer as _summarizer
+    _saved_summarize = _summarizer.summarize_inbox
+    _saved_cfg = app.cfg
+    _captured = {}
+    try:
+        def _fake_summarize(cfg, letters="sabc", *, days=None, log=print):
+            _captured["letters"] = letters
+            _captured["days"] = days
+            return 0
+
+        _summarizer.summarize_inbox = _fake_summarize
+        # 配置不全会弹对话框拦下来，这里临时给一份**完整**配置（含 base_url / model）
+        app.cfg = config.from_dict({
+            "email": "selftest@example.com",
+            "summary_recipient": "selftest@example.com",
+            "ai": {"active": "deepseek",
+                   "profiles": {"deepseek": {"type": "openai",
+                                             "base_url": "https://api.deepseek.com",
+                                             "model": "deepseek-flash",
+                                             "api_key": "test-key"}}},
+        })
+        app._days.set("3")
+        app._run_sum()
+        pump(root, 0.8)                      # 让后台线程把任务跑完
+        check("Sum 使用界面 Scope 的天数（不再是写死的 summary_days）",
+              _captured.get("days") == 3)
+        check("Sum 仍然整理全部级别", _captured.get("letters") == "sabc")
+        check("日志里报出实际天数", "last 3 day(s)" in app.log.contents())
+        app._days.set("0")                   # 越界会被夹回 1..365
+        check("Scope 越界自动夹到 1", app._days_int() == 1)
+        app._days.set("7")                   # 还原成默认值
+    finally:
+        _summarizer.summarize_inbox = _saved_summarize
+        app.cfg = _saved_cfg
+
     # ── 4. User info 表单 ─────────────────────────────────────
     print("[4] User info 表单")
     from gui.user_info_dialog import UserInfoDialog

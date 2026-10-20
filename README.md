@@ -243,7 +243,7 @@ step 2  Level, first match wins:
 | `graph.token_cache` | Where the sign-in credential is cached, relative to `config.json`. Delete it to force a fresh sign-in. | `graph_token.json` |
 | `language` | `zh` / `en`. **Affects only the summary report and its subject** (the GUI stays English). | `en` |
 | `summary_recipient` | Where the summary goes; empty = send to yourself. | empty |
-| `summary_days` | How many days the summary covers. | `7` |
+| `summary_days` | How many days the summary covers. The **Scope: last N days** field on the main window overrides it for an on-demand **Sum**. | `7` |
 | `batch_size` | Emails per AI request. | `40` |
 | `urgent_days` | A deadline within N days means "act now" (needs action + deadline → S). | `14` |
 | `catchup_days` | On startup, classify unlabelled mail from the last N days; **`0` disables**. | `7` |
@@ -338,13 +338,13 @@ Exit codes: `0` success, `1` config or connection problem, `2` partial failure.
 
 | Item | Detail |
 |---|---|
-| Version | **v2.0.3** |
+| Version | **v2.0.4** |
 | Released | **2026-10-20** |
 | Repository | [MiKasss666/ai-email-manager](https://github.com/MiKasss666/ai-email-manager) (renamed from `hkust-ai-email-manager`; old links redirect) |
 | Mail backend | Microsoft Graph over HTTPS; the legacy Outlook Classic + COM backend is still available behind `"mail_source": "outlook"` |
 | Distribution | `EmailManager.zip` from [Releases](https://github.com/MiKasss666/ai-email-manager/releases/latest) — unzip and run `EmailManager.exe` |
 
-v2.0.3 is the current release: a Windows desktop assistant that reads your Microsoft mailbox through Microsoft Graph, sorts every mail into S / A / B / C, writes the level back as a category and emails you an HTML summary report when you ask for one. Nothing has to be installed besides the unzipped folder, and desktop Outlook plays no part in the default path — the only account step is a one-time Microsoft sign-in on first launch. Summary titles are links into Outlook on the web, so a click opens that exact message on a desktop, in the new Outlook or on a phone. Version history is kept in the git history and on the Releases page.
+v2.0.4 is the current release: a Windows desktop assistant that reads your Microsoft mailbox through Microsoft Graph, sorts every mail into S / A / B / C, writes the level back as a category and emails you an HTML summary report when you ask for one. Nothing has to be installed besides the unzipped folder, and desktop Outlook plays no part in the default path — the only account step is a one-time Microsoft sign-in on first launch. Summary titles are links into Outlook on the web, so a click opens that exact message on a desktop, in the new Outlook or on a phone. Version history is kept in the git history and on the Releases page.
 
 ---
 
@@ -627,7 +627,7 @@ step 2  判级别，前一步命中即停止：
 | `graph.token_cache` | 登录凭据缓存的文件名（相对 `config.json` 所在目录）。删掉它 = 强制重新登录。 | `graph_token.json` |
 | `language` | `zh` / `en`。**只影响总结报告和邮件主题的语言**（界面固定英文）。 | `en` |
 | `summary_recipient` | 总结报告发给谁；留空 = 发给自己。 | 空 |
-| `summary_days` | 总结覆盖最近多少天。 | `7` |
+| `summary_days` | 总结覆盖最近多少天。主窗口上的 **Scope: last N days** 在手动点 **Sum** 时优先于它。 | `7` |
 | `batch_size` | 每次送给模型的邮件数。 | `40` |
 | `urgent_days` | deadline 在多少天内算"要动手"（需做某事 + 有截止 → S）。 | `14` |
 | `catchup_days` | 启动时补分类最近多少天的未分类邮件；**`0` = 关闭**。 | `7` |
@@ -722,13 +722,13 @@ py -3 run.py summarize [letters]  # 生成并发送总结报告；letters 如 s 
 
 | 项 | 内容 |
 |---|---|
-| 版本 | **v2.0.3** |
+| 版本 | **v2.0.4** |
 | 发布日期 | **2026-10-20** |
 | 仓库 | [MiKasss666/ai-email-manager](https://github.com/MiKasss666/ai-email-manager)（原名 `hkust-ai-email-manager`，旧链接会自动跳转） |
 | 邮件后端 | 通过 HTTPS 调用 Microsoft Graph；旧的 Outlook 经典版 + COM 后端仍保留，设 `"mail_source": "outlook"` 即可切回 |
 | 分发方式 | 从 [Releases](https://github.com/MiKasss666/ai-email-manager/releases/latest) 下载 `EmailManager.zip`，解压后运行 `EmailManager.exe` |
 
-v2.0.3 是当前版本：一个 Windows 桌面程序，通过 Microsoft Graph 读取你的 Microsoft 邮箱，把每封邮件判成 S / A / B / C、把级别写回分类，并在你需要时给你发一封 HTML 总结报告。除了解压出来的文件夹之外不需要安装任何东西，默认路径也完全不碰桌面版 Outlook——唯一需要你参与的账号步骤，是首次启动时登录一次 Microsoft 账号。总结报告里的标题是指向 Outlook 网页版的链接，点一下就会在电脑、新版 Outlook 或手机上打开那一封邮件。版本历史保留在 git 提交记录与 Releases 页面里。
+v2.0.4 是当前版本：一个 Windows 桌面程序，通过 Microsoft Graph 读取你的 Microsoft 邮箱，把每封邮件判成 S / A / B / C、把级别写回分类，并在你需要时给你发一封 HTML 总结报告。除了解压出来的文件夹之外不需要安装任何东西，默认路径也完全不碰桌面版 Outlook——唯一需要你参与的账号步骤，是首次启动时登录一次 Microsoft 账号。总结报告里的标题是指向 Outlook 网页版的链接，点一下就会在电脑、新版 Outlook 或手机上打开那一封邮件。版本历史保留在 git 提交记录与 Releases 页面里。
 
 ---
 
