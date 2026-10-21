@@ -1335,6 +1335,56 @@ try:
 finally:
     ai.ask_json = _saved_ask
 
+print("[20] 分类主列表建不出来时：只提示一次，判级与写回照常")
+_saved_blocked = graph_mod._category_create_blocked
+
+
+class _Cat403Client:
+    """模拟「只有 Mail.ReadWrite、没有 MailboxSettings.ReadWrite」的登录。"""
+
+    def master_categories(self):
+        return [{"displayName": "Red category"}]
+
+    def ensure_master_category(self, name):
+        raise graph_mod.GraphError("HTTP 403 ErrorAccessDenied: Access is denied.", 403)
+
+
+class _CatHaveClient:
+    def __init__(self):
+        self.attempts = []
+
+    def master_categories(self):
+        return [{"displayName": n} for n in ("S", "A", "B", "C", "Sum")]
+
+    def ensure_master_category(self, name):
+        self.attempts.append(name)
+        return False
+
+
+try:
+    graph_mod._category_create_blocked = False
+    _c403 = _Cat403Client()
+    _ns403 = graph_mod.GraphSession(_c403)
+    _first = graph_mod.ensure_categories(_ns403)
+    check("缺权限时只返回一条聚合提示（不再是 4 行报错）",
+          len(_first) == 1 and "cannot create" in _first[0])
+    check("提示里写清怎么开启（加 MailboxSettings.ReadWrite）",
+          "MailboxSettings.ReadWrite" in _first[0])
+    check("之后不再反复尝试（不会每 30 秒刷屏）",
+          graph_mod.ensure_categories(_ns403) == [])
+    graph_mod._category_create_blocked = False
+    check("Sum 分类建不出来时不抛异常、只返回 False",
+          graph_mod.ensure_sum_category(_ns403) is False)
+    check("Sum 分类失败后也进入「不再重试」状态", graph_mod._category_create_blocked is True)
+
+    graph_mod._category_create_blocked = False
+    _have = _CatHaveClient()
+    check("四个分类都在时不尝试创建",
+          graph_mod.ensure_categories(graph_mod.GraphSession(_have)) == []
+          and _have.attempts == [])
+finally:
+    graph_mod._category_create_blocked = _saved_blocked
+
 print(f"\n全部通过：{ok} 项")
 print("\n--- build_spec 实际产出（配置缺字段时的样子）---")
 print(classifier.build_spec(config.from_dict({"email": "a@b.c"})))

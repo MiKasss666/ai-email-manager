@@ -1,4 +1,4 @@
-# Email Manager · AI inbox assistant for your Microsoft mailbox
+﻿# Email Manager · AI inbox assistant for your Microsoft mailbox
 
 **Part 1 · English below ｜ Part 2 · 中文在下方（中文全文）**
 
@@ -237,7 +237,7 @@ step 2  Level, first match wins:
 | `mail_source` | Which mail backend: `graph` (Microsoft Graph, no Outlook needed) or `outlook` (legacy Outlook Classic + COM). No GUI control — edit the file and reopen the app. | `graph` |
 | `graph.tenant` | Which Microsoft tenant sign-in is restricted to. `common` accepts any account; set your school's domain (e.g. `hkust.edu.hk`) to refuse accounts from outside it. | `common` |
 | `graph.client_id` | Microsoft Entra app id. Empty = use Microsoft's own public client, which is fine for personal use; register your own app at [entra.microsoft.com](https://entra.microsoft.com) to distribute to others. | empty |
-| `graph.scopes` | Permissions requested when signing in to read **and write** mail. | `offline_access openid profile User.Read Mail.ReadWrite` |
+| `graph.scopes` | Permissions requested when signing in to read **and write** mail. Add `MailboxSettings.ReadWrite` here if you also want the app to create the `S/A/B/C/Sum` entries in Outlook's category list. | `offline_access openid profile User.Read Mail.ReadWrite` |
 | `graph.probe_scopes` | Read-only permissions used by the self-check. | `offline_access openid profile User.Read Mail.Read` |
 | `graph.open_browser` | Open the default browser automatically when a sign-in is needed. `false` = no window opens, the code still appears in the log. | `true` |
 | `graph.token_cache` | Where the sign-in credential is cached, relative to `config.json`. Delete it to force a fresh sign-in. | `graph_token.json` |
@@ -330,6 +330,7 @@ Exit codes: `0` success, `1` config or connection problem, `2` partial failure.
 | The **device code expired** | The code is valid for about **15 minutes**. Restart the app to get a fresh code, then finish the sign-in without waiting. |
 | Sign-in worked but **mail cannot be read** | Check your network connection: the Graph backend needs internet access, unlike the old local COM path. |
 | You want to sign in **again / as another account** | Delete `graph_token.json` (next to `config.json`) to force a fresh sign-in. |
+| The log says **`cannot create the S/A/B/C categories`** with `HTTP 403 ErrorAccessDenied` | Creating entries in Outlook's category list needs the **`MailboxSettings.ReadWrite`** permission, which is *not* part of the default sign-in. Classification and the write-back of `S/A/B/C` are **not affected** — the levels are still written to the mail (Graph accepts category names that are not in the list), you just don't see them in Outlook's category list. To let the app create them: add `MailboxSettings.ReadWrite` to `graph.scopes` in `config.json`, delete `graph_token.json`, and sign in again. The app mentions this once instead of repeating it. |
 | The legacy COM backend logs `Server execution failed` | You launched it with a **Low**-integrity process, which cannot reach Outlook Classic. Run `check_context.bat` and start the app normally, from a normal user session. |
 
 ---
@@ -338,13 +339,13 @@ Exit codes: `0` success, `1` config or connection problem, `2` partial failure.
 
 | Item | Detail |
 |---|---|
-| Version | **v2.0.4** |
+| Version | **v2.0.5** |
 | Released | **2026-10-20** |
 | Repository | [MiKasss666/ai-email-manager](https://github.com/MiKasss666/ai-email-manager) (renamed from `hkust-ai-email-manager`; old links redirect) |
 | Mail backend | Microsoft Graph over HTTPS; the legacy Outlook Classic + COM backend is still available behind `"mail_source": "outlook"` |
 | Distribution | `EmailManager.zip` from [Releases](https://github.com/MiKasss666/ai-email-manager/releases/latest) — unzip and run `EmailManager.exe` |
 
-v2.0.4 is the current release: a Windows desktop assistant that reads your Microsoft mailbox through Microsoft Graph, sorts every mail into S / A / B / C, writes the level back as a category and emails you an HTML summary report when you ask for one. Nothing has to be installed besides the unzipped folder, and desktop Outlook plays no part in the default path — the only account step is a one-time Microsoft sign-in on first launch. Summary titles are links into Outlook on the web, so a click opens that exact message on a desktop, in the new Outlook or on a phone. Version history is kept in the git history and on the Releases page.
+v2.0.5 is the current release: a Windows desktop assistant that reads your Microsoft mailbox through Microsoft Graph, sorts every mail into S / A / B / C, writes the level back as a category and emails you an HTML summary report when you ask for one. Nothing has to be installed besides the unzipped folder, and desktop Outlook plays no part in the default path — the only account step is a one-time Microsoft sign-in on first launch. Summary titles are links into Outlook on the web, so a click opens that exact message on a desktop, in the new Outlook or on a phone. Version history is kept in the git history and on the Releases page.
 
 ---
 
@@ -621,7 +622,7 @@ step 2  判级别，前一步命中即停止：
 | `mail_source` | 用哪个邮件后端：`graph`（Microsoft Graph，不需要 Outlook）或 `outlook`（旧的 Outlook 经典版 + COM）。没有界面入口——改完文件重开程序生效。 | `graph` |
 | `graph.tenant` | 登录限定在哪个 Microsoft 租户。`common` 接受任何账号；填本校域名（如 `hkust.edu.hk`）可拒绝校外账号登录。 | `common` |
 | `graph.client_id` | Microsoft Entra 应用 id。留空 = 用微软自家公开客户端，自己用没问题；要分发给别人请到 [entra.microsoft.com](https://entra.microsoft.com) 注册自己的应用。 | 空 |
-| `graph.scopes` | 登录时申请、用于读**并写**邮件的权限。 | `offline_access openid profile User.Read Mail.ReadWrite` |
+| `graph.scopes` | 登录时申请、用于读**并写**邮件的权限。若还想让程序在 Outlook 分类列表里创建 `S/A/B/C/Sum` 条目，把 `MailboxSettings.ReadWrite` 也加进来。 | `offline_access openid profile User.Read Mail.ReadWrite` |
 | `graph.probe_scopes` | 自检用的只读权限。 | `offline_access openid profile User.Read Mail.Read` |
 | `graph.open_browser` | 需要登录时自动打开默认浏览器。`false` = 不弹浏览器，设备码仍然会打进日志。 | `true` |
 | `graph.token_cache` | 登录凭据缓存的文件名（相对 `config.json` 所在目录）。删掉它 = 强制重新登录。 | `graph_token.json` |
@@ -714,6 +715,7 @@ py -3 run.py summarize [letters]  # 生成并发送总结报告；letters 如 s 
 | **设备码过期** | 设备码有效期约 **15 分钟**。重启程序拿一个新码，然后尽快完成登录。 |
 | 登录成功了但**读不到邮件** | 检查网络：Graph 后端需要联网，这一点和旧的本地 COM 路径不同。 |
 | 想**换账号 / 重新登录** | 删掉 `graph_token.json`（与 `config.json` 同目录）即可强制重新登录。 |
+| 日志里出现 **`cannot create the S/A/B/C categories`** 并带 `HTTP 403 ErrorAccessDenied` | 在 Outlook 分类列表里创建条目需要 **`MailboxSettings.ReadWrite`** 权限，默认登录时不申请。**判级与 `S/A/B/C` 写回都不受影响** —— 级别仍然会写到邮件上（Graph 接受不在主列表里的分类名），只是 Outlook 的分类列表里看不到它们。想让程序创建：把 `MailboxSettings.ReadWrite` 加进 `config.json` 的 `graph.scopes`，删掉 `graph_token.json`，重新登录一次。程序只会提示一次，不会反复刷。 |
 | 旧 COM 后端日志里出现 `Server execution failed` | 你在 **Low** 完整性进程里启动了程序，连不上 Outlook 经典版。跑一次 `check_context.bat`，然后从普通用户会话正常启动程序。 |
 
 ---
@@ -722,13 +724,13 @@ py -3 run.py summarize [letters]  # 生成并发送总结报告；letters 如 s 
 
 | 项 | 内容 |
 |---|---|
-| 版本 | **v2.0.4** |
+| 版本 | **v2.0.5** |
 | 发布日期 | **2026-10-20** |
 | 仓库 | [MiKasss666/ai-email-manager](https://github.com/MiKasss666/ai-email-manager)（原名 `hkust-ai-email-manager`，旧链接会自动跳转） |
 | 邮件后端 | 通过 HTTPS 调用 Microsoft Graph；旧的 Outlook 经典版 + COM 后端仍保留，设 `"mail_source": "outlook"` 即可切回 |
 | 分发方式 | 从 [Releases](https://github.com/MiKasss666/ai-email-manager/releases/latest) 下载 `EmailManager.zip`，解压后运行 `EmailManager.exe` |
 
-v2.0.4 是当前版本：一个 Windows 桌面程序，通过 Microsoft Graph 读取你的 Microsoft 邮箱，把每封邮件判成 S / A / B / C、把级别写回分类，并在你需要时给你发一封 HTML 总结报告。除了解压出来的文件夹之外不需要安装任何东西，默认路径也完全不碰桌面版 Outlook——唯一需要你参与的账号步骤，是首次启动时登录一次 Microsoft 账号。总结报告里的标题是指向 Outlook 网页版的链接，点一下就会在电脑、新版 Outlook 或手机上打开那一封邮件。版本历史保留在 git 提交记录与 Releases 页面里。
+v2.0.5 是当前版本：一个 Windows 桌面程序，通过 Microsoft Graph 读取你的 Microsoft 邮箱，把每封邮件判成 S / A / B / C、把级别写回分类，并在你需要时给你发一封 HTML 总结报告。除了解压出来的文件夹之外不需要安装任何东西，默认路径也完全不碰桌面版 Outlook——唯一需要你参与的账号步骤，是首次启动时登录一次 Microsoft 账号。总结报告里的标题是指向 Outlook 网页版的链接，点一下就会在电脑、新版 Outlook 或手机上打开那一封邮件。版本历史保留在 git 提交记录与 Releases 页面里。
 
 ---
 

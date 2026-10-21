@@ -730,31 +730,54 @@ def our_category_colors(ns: GraphSession) -> Dict[str, int]:
     return {}
 
 
+# 创建「分类主列表」需要这个权限；邮件读写（Mail.ReadWrite）不够。
+# 它是一个**可选**权限：有些租户不允许用户自行同意，所以默认不申请 ——
+# 没它照样能把 S/A/B/C 贴到邮件上，只是 Outlook 的分类列表里看不到这几项。
+CATEGORY_SCOPE = "MailboxSettings.ReadWrite"
+
+# 一旦确认"这个登录建不了分类"，本次运行就不再反复尝试 / 反复刷日志。
+_category_create_blocked = False
+
+
 def ensure_categories(ns: GraphSession) -> List[str]:
-    """确保 S/A/B/C 存在（缺了就建）。返回改动说明，供调用方打日志。"""
-    changes: List[str] = []
+    """确保 S/A/B/C 存在（缺了就建）。返回改动说明，供调用方打日志。
+
+    创建失败（缺 MailboxSettings.ReadWrite 权限 → HTTP 403）时**只报一次**，
+    并说明怎么开启；判级与写回不受影响（Graph 允许把主列表里不存在的分类名
+    直接写到邮件上，实测通过）。
+    """
+    global _category_create_blocked
     try:
         have = set(existing_categories(ns))
     except GraphError as ex:
         return [f"could not read categories: {ex}"]
-    for level in LEVELS:
-        if level in have:
-            continue
-        try:
+
+    missing = [level for level in LEVELS if level not in have]
+    if not missing or _category_create_blocked:
+        return []
+
+    try:
+        for level in missing:
             ns.client.ensure_master_category(level)
-            changes.append(f"created category {level}")
-        except GraphError as ex:
-            changes.append(f"could not create category {level}: {ex}")
-    return changes
+        return ["created categories: " + ", ".join(missing)]
+    except GraphError as ex:
+        _category_create_blocked = True
+        return [f"cannot create the S/A/B/C categories ({ex}). Levels are still written to "
+                f"mail, but Outlook's category list stays empty. To let the app create them, "
+                f"add {CATEGORY_SCOPE} to graph.scopes in config.json and sign in again."]
 
 
 def ensure_sum_category(ns: GraphSession) -> bool:
+    global _category_create_blocked
+    if _category_create_blocked:
+        return False
     try:
         if SUM_NAME in set(existing_categories(ns)):
             return False
         ns.client.ensure_master_category(SUM_NAME)
         return True
     except GraphError:
+        _category_create_blocked = True
         return False
 
 
