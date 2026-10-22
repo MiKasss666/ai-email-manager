@@ -5,7 +5,7 @@ abstract: "An AI email assistant that sorts an Outlook inbox into S/A/B/C and em
 authors:
   - name: "pkfok@hkust"
     affiliation: "The Hong Kong University of Science and Technology (HKUST)"
-version: 2.0.5
+version: 2.0.6
 date-released: 2026-10-20
 license: MIT
 repository-code: "https://github.com/MiKasss666/ai-email-manager"

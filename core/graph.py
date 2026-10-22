@@ -762,9 +762,12 @@ def ensure_categories(ns: GraphSession) -> List[str]:
         return ["created categories: " + ", ".join(missing)]
     except GraphError as ex:
         _category_create_blocked = True
-        return [f"cannot create the S/A/B/C categories ({ex}). Levels are still written to "
-                f"mail, but Outlook's category list stays empty. To let the app create them, "
-                f"add {CATEGORY_SCOPE} to graph.scopes in config.json and sign in again."]
+        return [f"cannot create the S/A/B/C categories ({ex}). This is normal: creating them "
+                f"needs the {CATEGORY_SCOPE} permission, and many universities (HKUST "
+                f"included) require administrator approval for it - requesting it makes the "
+                f"sign-in page show 'Approval required'. Levels are still written to mail; "
+                f"to make them visible in Outlook's category list, create S, A, B, C and Sum "
+                f"once yourself: right-click any mail -> Categorize -> All Categories -> New."]
 
 
 def ensure_sum_category(ns: GraphSession) -> bool:

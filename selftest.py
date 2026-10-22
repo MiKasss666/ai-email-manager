@@ -1368,7 +1368,11 @@ try:
     _first = graph_mod.ensure_categories(_ns403)
     check("缺权限时只返回一条聚合提示（不再是 4 行报错）",
           len(_first) == 1 and "cannot create" in _first[0])
-    check("提示里写清怎么开启（加 MailboxSettings.ReadWrite）",
+    check("提示里说明这是正常现象（该权限多数租户要管理员批准）",
+          "administrator approval" in _first[0] and "Approval required" in _first[0])
+    check("提示里给出最省事的做法（自己在 Outlook 里建 5 个分类）",
+          "All Categories" in _first[0] and "Sum" in _first[0])
+    check("提示里仍然提到所需权限名，方便查证",
           "MailboxSettings.ReadWrite" in _first[0])
     check("之后不再反复尝试（不会每 30 秒刷屏）",
           graph_mod.ensure_categories(_ns403) == [])
