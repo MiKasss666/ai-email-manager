@@ -359,11 +359,11 @@ The app sends **email content** (sender, subject, body excerpts) to the AI provi
 
 ## Credit & Citation
 
-**Designed by pkfok@hkust** ｜ Hong Kong University of Science and Technology (HKUST)
+**Designed by your-account@hkust** ｜ Hong Kong University of Science and Technology (HKUST)
 
 | Item | Detail |
 |---|---|
-| Author | **pkfok@hkust** (HKUST) |
+| Author | **your-account@hkust** (HKUST) |
 | First published | **2026-10-10** — the public, timestamped commit history of this repository is the record of authorship |
 | License | [MIT](LICENSE) © 2026 MiKasss666 |
 
@@ -378,7 +378,7 @@ already outside the terms of the licence.**
 
 ### How to cite
 
-> This project uses Email Manager by pkfok@hkust (HKUST),
+> This project uses Email Manager by your-account@hkust (HKUST),
 > available at https://github.com/MiKasss666/ai-email-manager
 
 A machine-readable [CITATION.cff](CITATION.cff) is included, so GitHub shows a
@@ -744,11 +744,11 @@ v2.0.6 是当前版本：一个 Windows 桌面程序，通过 Microsoft Graph �
 
 ## 声明与引用
 
-**Designed by pkfok@hkust** ｜ 香港科技大学（HKUST）
+**Designed by your-account@hkust** ｜ 香港科技大学（HKUST）
 
 | 项 | 内容 |
 |---|---|
-| 作者 | **pkfok@hkust**（HKUST） |
+| 作者 | **your-account@hkust**（HKUST） |
 | 首次发布 | **2026-10-10** —— 本仓库的**公开提交记录**（带时间戳）即为著作权证明 |
 | 许可 | [MIT](LICENSE) © 2026 MiKasss666 |
 
@@ -761,7 +761,7 @@ v2.0.6 是当前版本：一个 Windows 桌面程序，通过 Microsoft Graph �
 
 ### 引用格式
 
-> 本项目使用了 Email Manager（作者 pkfok@hkust，HKUST），
+> 本项目使用了 Email Manager（作者 your-account@hkust，HKUST），
 > 仓库地址：https://github.com/MiKasss666/ai-email-manager
 
 仓库里还有一份机器可读的 [CITATION.cff](CITATION.cff) —— GitHub 会据此在侧边栏显示
