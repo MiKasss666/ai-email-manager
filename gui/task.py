@@ -1,13 +1,10 @@
 """gui/task.py — 后台任务执行器。
 
-界面上的「分类」「总结」要跑几十秒到几分钟（AI 调用 + Outlook COM），
+界面上的「分类」「总结」要跑几十秒到几分钟（AI 调用 + 邮箱读写），
 必须放到后台线程，否则窗口会一直假死。
 
-两条线程规则（踩过就知道疼）：
-  1. Tkinter 的 widget 只能在主线程碰 —— 所以结果不直接回调，
-     而是丢进 queue，由主线程的 after 轮询取出来执行。
-  2. 后台线程要用 Outlook COM 必须先 CoInitialize()，否则报
-     「尚未调用 CoInitialize」；任务结束后要 CoUninitialize() 配对释放。
+线程规则（踩过就知道疼）：Tkinter 的 widget 只能在主线程碰 ——
+所以结果不直接回调，而是丢进 queue，由主线程的 after 轮询取出来执行。
 """
 from __future__ import annotations
 
@@ -17,35 +14,14 @@ import time
 import tkinter as tk
 from typing import Any, Callable, Optional, Tuple
 
-try:
-    import pythoncom
-except ImportError:      # 没装 pywin32 时界面仍能打开，只是真正跑任务才会报错
-    pythoncom = None
-
 POLL_MS = 100
-
-
-def _com_initialize() -> None:
-    if pythoncom is not None:
-        try:
-            pythoncom.CoInitialize()
-        except Exception:
-            pass
-
-
-def _com_uninitialize() -> None:
-    if pythoncom is not None:
-        try:
-            pythoncom.CoUninitialize()
-        except Exception:
-            pass
 
 
 class RunToken:
     """一次任务的「身份证 + 取消信号」。
 
-    为什么需要：Force reset 之后，被放弃的线程**杀不掉**（通常正卡在 Outlook 的
-    模态对话框上），它会继续往下跑。没有令牌的时候，它的结果会：
+    为什么需要：Force reset 之后，被放弃的线程**杀不掉**（通常正卡在一个
+    不返回的网络调用上），它会继续往下跑。没有令牌的时候，它的结果会：
 
       · 被当成当前任务的结果，打到**新任务的回调**上（Categorize 的 dict 落到 Sum 的
         回调里会直接抛 KeyError）；
@@ -55,8 +31,8 @@ class RunToken:
     有了令牌：结果按「代次」认领，过期的直接丢弃；`cancel` 事件让旧任务在下一个
     安全点自己停下来（比如下一批 AI 调用之前、下一封写回之前）。
 
-    另外带一个 `phase`：当前这一步在等什么。界面据此把「卡在 AI」和「卡在 Outlook」
-    区分开 —— 否则只能按时间瞎猜，实测就把"等 DeepSeek 回话"误报成了"Outlook 没响应"。
+    另外带一个 `phase`：当前这一步在等什么。界面据此把「卡在 AI」和「卡在邮箱」
+    区分开 —— 否则只能按时间瞎猜，实测就把"等 DeepSeek 回话"误报成了"邮箱没响应"。
     """
 
     __slots__ = ("generation", "cancel", "phase")
@@ -103,7 +79,7 @@ class TaskRunner:
     def elapsed(self) -> float:
         """当前任务已经跑了多少秒；空闲时为 0。
 
-        用来把「界面卡住了」和「任务真的在跑」区分开 —— Outlook 弹着对话框时
+        用来把「界面卡住了」和「任务真的在跑」区分开 —— 网络调用挂着不返回时
         COM 调用会一直挂着（既不返回也不报错），用户需要看得见时间在走。
         """
         if not self._busy or self._started_at is None:
@@ -130,7 +106,7 @@ class TaskRunner:
     def set_phase(self, text: str) -> None:
         """记下「现在在等什么」（由工作线程调用，例如 'waiting for the AI (deepseek)'）。
 
-        界面用它把卡住的原因说准：卡在 AI 和卡在 Outlook 的处理方式完全不同。
+        界面用它把卡住的原因说准：卡在 AI 和卡在邮箱的处理方式完全不同。
         """
         token = self.token
         if token is not None:
@@ -144,7 +120,7 @@ class TaskRunner:
     def force_reset(self) -> None:
         """把一个卡死的任务标记为结束，让界面重新可用。
 
-        卡住的线程杀不掉（通常正卡在 Outlook 的某个模态对话框上），这里做三件事：
+        卡住的线程杀不掉（通常正卡在一个不返回的网络调用上），这里做三件事：
 
           1. `cancel.set()`：通知它**在下一个安全点停下来** —— 不再继续写邮箱；
           2. 代次 +1：它后面才回来的结果会被丢弃，不会再打到新任务的回调上；
@@ -181,15 +157,12 @@ class TaskRunner:
         def worker() -> None:
             # 令牌放线程本地：被放弃的任务后知后觉回来时，读到的仍是**它自己**那份
             self._local.token = token
-            _com_initialize()
             try:
                 result = work()
             except BaseException as ex:   # 后台异常必须兜住，否则界面会永远卡在 busy
                 self._results.put((token.generation, "error", ex))
             else:
                 self._results.put((token.generation, "done", result))
-            finally:
-                _com_uninitialize()
 
         threading.Thread(target=worker, daemon=True, name="email-manager-task").start()
         return True

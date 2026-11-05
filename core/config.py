@@ -1,7 +1,7 @@
 """core/config.py — 配置层。
 
 单一职责：把 config.json 变成一个经过校验、可直接使用的 Config 对象。
-本模块不认识 Outlook，也不认识具体某个 AI 服务（只知道它们的配置长什么样）。
+本模块不认识邮件后端，也不认识具体某个 AI 服务（只知道它们的配置长什么样）。
 
 四条原则（针对旧版的问题）：
   · 只保留被代码真正使用的字段 —— 不做「以后可能用」的预留开关。
@@ -20,7 +20,7 @@ from typing import Dict, List, Optional
 
 CONFIG_NAME = "config.json"
 
-# 四个级别（业务概念）。颜色属于 Outlook，见 outlook.CATEGORY_COLORS。
+# 四个级别（业务概念）。写回时用的分类名与合并规则见 core/mailmeta.py。
 LEVELS = ("S", "A", "B", "C")
 
 # AI 后端类型（ai.py 的调用分发必须覆盖这里列出的每一种）
@@ -126,12 +126,6 @@ def _as_list(value) -> List[str]:
             seen.add(v)
             out.append(v)
     return out
-
-
-def _normalize_mail_source(value) -> str:
-    """邮件后端名归一：认不出来就回落默认（graph）。"""
-    text = _as_str(value, DEFAULT_MAIL_SOURCE).lower()
-    return text if text in MAIL_SOURCES else DEFAULT_MAIL_SOURCE
 
 
 def _normalize_language(value) -> str:
@@ -275,10 +269,6 @@ def ai_profile_to_dict(profile: AiProfile) -> dict:
     }
 
 
-# ── 邮件后端（Graph / Outlook COM）─────────────────────────────────
-DEFAULT_MAIL_SOURCE = "graph"          # 默认走 Microsoft Graph；旧行为是 "outlook"
-MAIL_SOURCES = ("graph", "outlook")
-
 # Graph 需要的委托权限：Mail.ReadWrite 才能写回 S/A/B/C 分类；只读自检用 probe_scopes
 DEFAULT_GRAPH_SCOPES = "offline_access openid profile User.Read Mail.ReadWrite"
 DEFAULT_GRAPH_PROBE_SCOPES = "offline_access openid profile User.Read Mail.Read"
@@ -332,8 +322,7 @@ class Config:
     faculty: str = ""               # 各人学院不同，留空由用户填
     courses: List[str] = field(default_factory=list)
 
-    # 邮件来源：graph（默认，不需要 Outlook）或 outlook（经典版 + COM）
-    mail_source: str = DEFAULT_MAIL_SOURCE
+    # Microsoft Graph 后端设置（v3 起只有这一个后端）
     graph: GraphConfig = field(default_factory=GraphConfig)
 
     # 输出与总结
@@ -478,7 +467,6 @@ def from_dict(raw: dict) -> Config:
         course_code_regex=_as_str(raw.get("course_code_regex"), DEFAULT_COURSE_CODE_RE),
         faculty_keywords=_as_list(raw.get("faculty_keywords")),
         school_domains=domains,
-        mail_source=_normalize_mail_source(raw.get("mail_source")),
         graph=graph_from_dict(raw.get("graph")),
         ai_active=_as_str(ai_raw.get("active"), DEFAULT_AI_ACTIVE),
         ai_profiles=profiles,
@@ -503,7 +491,6 @@ def to_dict(cfg: Config) -> dict:
         "course_code_regex": cfg.course_code_regex,
         "faculty_keywords": list(cfg.faculty_keywords),
         "school_domains": list(cfg.school_domains),
-        "mail_source": cfg.mail_source,
         "graph": graph_to_dict(cfg.graph),
         "ai": {
             "active": cfg.ai_active,
@@ -527,18 +514,24 @@ def load(path: Optional[str] = None) -> Config:
         return Config()
 
 
-def save(cfg: Config, path: Optional[str] = None) -> str:
-    """原子写入（先写 .tmp 再替换），避免中途失败留下半个文件。
+def write_json_atomic(path: str, data) -> None:
+    """原子写 JSON（先写 .tmp 再替换），避免中途失败留下半个文件。
 
-    临时文件名带 pid：万一真有两个实例（互斥体挡不住的情况，比如一个是旧版本），
-    也不会交错写同一个 .tmp 再 os.replace —— 那会把 config.json 写坏，
-    而不只是丢一次更新。
+    临时文件名带 pid：万一真有两个实例，也不会交错写同一个 .tmp 再 os.replace
+    —— 那会把文件写坏，而不只是丢一次更新。
+
+    config.json / graph_token.json / watch_state.json 都走这里。
     """
-    path = path or config_path()
     tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(to_dict(cfg), f, ensure_ascii=False, indent=2)
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
+
+
+def save(cfg: Config, path: Optional[str] = None) -> str:
+    """把配置原子写回 config.json。"""
+    path = path or config_path()
+    write_json_atomic(path, to_dict(cfg))
     return path
 
 

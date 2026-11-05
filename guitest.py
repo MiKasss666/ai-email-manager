@@ -1,4 +1,4 @@
-"""guitest.py — 界面冒烟测试：不弹对话框、不联网、不碰 Outlook、不改 config.json。
+"""guitest.py — 界面冒烟测试：不弹对话框、不联网、不碰真实邮箱、不改 config.json。
 
 用法（在 Email_manager_beta 目录下）：
     py -3 guitest.py
@@ -206,7 +206,7 @@ def main() -> int:
     pump(root, 1.0)
     check("回调在主线程执行（能安全操作界面）", threads.get("name") == "MainThread")
 
-    print("[3b] 卡死逃生口（模拟 Outlook 不响应）")
+    print("[3b] 卡死逃生口（模拟邮箱/网络调用不响应）")
     check("状态栏看门狗已启动", app._watchdog_id is not None)
 
     hang = threading.Event()
@@ -249,9 +249,9 @@ def main() -> int:
           stale_calls == ["fresh"] and app.runner.busy is False)
     check("主线程读不到任务令牌（令牌是各工作线程自己的）", app.runner.token is None)
 
-    # 卡住提示必须按「现在在等什么」说话：卡在 AI 和卡在 Outlook 的处理方式完全不同。
-    # 实测踩过：等 DeepSeek 回话等了 8 分钟，界面却一直说 "Outlook has not answered"。
-    print("[3b-3] 卡住提示按阶段说话（不再一律怪 Outlook）")
+    # 卡住提示必须按「现在在等什么」说话：卡在 AI 和卡在邮箱/登录的处理方式完全不同。
+    # 实测踩过：等 DeepSeek 回话等了 8 分钟，界面却一直让用户去折腾邮箱。
+    print("[3b-3] 卡住提示按阶段说话（不再把 AI 卡住说成邮箱问题）")
     import gui.main_window as _mw
     _saved_hint = _mw.STUCK_HINT_SECONDS
     _mw.STUCK_HINT_SECONDS = 0                    # 让提示立刻触发
@@ -267,10 +267,11 @@ def main() -> int:
         pump(root, 1.6)                           # 看门狗每秒一次，要跨过它的 tick
         _text = app.log.contents()
         check("状态栏显示当前阶段", app.runner.phase.startswith("waiting for the AI"))
-        check("提示指向 AI 服务商，而不是让用户去折腾邮箱",
+        check("提示指向 AI 服务商，而不是让用户去折腾邮箱/重新登录",
               "AI provider has not answered" in _text
               and "Outlook has not answered" not in _text
-              and "mailbox has not answered" not in _text)
+              and "mailbox has not answered" not in _text
+              and "sign-in state" not in _text)
     finally:
         _mw.STUCK_HINT_SECONDS = _saved_hint
         app.runner.force_reset()
@@ -292,23 +293,24 @@ def main() -> int:
     check("看门狗把 Categorize 恢复可点", str(app._btn_categorize.cget("state")) == "normal")
     check("看门狗把 AI setting 恢复可点", str(app._btn_ai.cget("state")) == "normal")
 
-    print("[3d] Outlook 用不了时不当作失败")
-    from core.outlook import OutlookNotRunning
-    app.watcher.start(delay=60)          # 推迟首轮，避免测试真去连 Outlook
+    print("[3d] 邮箱暂时用不了时不当作失败")
+    from core.mailmeta import MailboxUnavailable
+    app.watcher.start(delay=60)          # 推迟首轮，避免测试真去连邮箱
     pump(root, 0.3)
     app.watcher._errors = 0
     app.log.clear()
-    app.watcher._on_error(OutlookNotRunning("outlook closed"))
-    check("Outlook 用不了不累计失败次数", app.watcher._errors == 0)
+    app.watcher._on_error(MailboxUnavailable("no network"))
+    check("邮箱用不了不累计失败次数", app.watcher._errors == 0)
     check("仍然保持监听（不会自动暂停）", app.watcher.running is True)
     check("轮询链继续排下去", app.watcher._after_id is not None)
     pump(root, 0.4)
     check("日志里给出了原因", "mailbox is not available yet" in app.log.contents())
     check("并说明会继续重试", "still watching; retrying every" in app.log.contents())
     app.log.clear()
-    app.watcher._on_error(OutlookNotRunning("outlook closed"))
+    app.watcher._on_error(MailboxUnavailable("still offline"))
     pump(root, 0.4)
-    check("同一种情况只提示一次（不刷屏）", "Outlook is not running" not in app.log.contents())
+    check("同一种情况只提示一次（不刷屏）",
+          "mailbox is not available yet" not in app.log.contents())
     app.watcher._on_error(ValueError("a real error"))
     check("真正的错误照常累计", app.watcher._errors == 1)
     app.watcher.stop()

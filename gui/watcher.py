@@ -11,17 +11,17 @@ main_window._maybe_start_watching）：每 N 秒看一次收件箱里最新的�
     不去遍历整个历史收件箱 —— 逐封读正文在 COM 上非常慢，大邮箱下要几分钟。
   · **状态存 watch_state.json**（上次记住的邮件 + 轮询间隔），所以关掉程序期间到的
     新邮件，下次启动会被补上。
-  · **Outlook 没开不算失败**：只提示一次、继续轮询，用户一打开 Outlook 就自动接上；
+  · **邮箱暂时连不上不算失败**：只提示一次、继续轮询，恢复后自动接上；
     真正的错误连续 3 次才自动暂停。
 
-判断与推进逻辑抽成了纯函数 plan_tick() / advance_policy()，可以脱离 Outlook 单测。
+判断与推进逻辑抽成了纯函数 plan_tick() / advance_policy()，可以脱离邮箱单测。
 """
 from __future__ import annotations
 
 import json
 import os
 import tkinter as tk
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core import classifier, config, mail as outlook, summarizer
 
@@ -36,7 +36,7 @@ BUSY_RETRY_DELAY = 2       # 有任务在跑时，过 2 秒再看
 MAX_MAIL_PER_ROUND = 100   # 一轮最多处理多少封新邮件（处理不完的下一轮接着来）
 CATCHUP_DAYS = 7           # 最多往回补多少天（兜住「上次记住的那封被删了/移走了」）
 MAX_FAILED_ROUNDS = 3      # 同一批连续失败几轮后放弃推进，避免无限重试烧额度
-OUTLOOK_RETRY_DELAY = 120  # Outlook 暂时用不了时的退避，别每 30 秒去撞一次
+MAILBOX_RETRY_DELAY = 120  # 邮箱暂时用不了时的退避，别每 30 秒去撞一次
 REPORT_TAG_DAYS = 30       # 往前找多少天内的"漏了 Sum 标签"的总结报告
 IGNORED_LIMIT = 1000       # 记住多少封「判定为非学校邮件」的邮件，别每次启动重复送 AI
 
@@ -56,9 +56,9 @@ def load_state() -> Dict[str, Any]:
 
 
 def save_state(state: Dict[str, Any]) -> None:
+    """原子写：崩溃/断电不会留下半个状态文件（否则基线会被当成丢失，白烧一轮 AI）。"""
     try:
-        with open(state_path(), "w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False, indent=2)
+        config.write_json_atomic(state_path(), state)
     except Exception:
         pass
 
@@ -131,11 +131,11 @@ def advance_policy(pending, failed: int, failed_rounds: int, newest_entry_id: Op
 def retry_delay_for(ex: BaseException) -> Optional[int]:
     """这次失败之后隔多久再试；返回 None 表示用默认间隔。
 
-    Outlook 暂时用不了（没开/启动失败）时退避久一点 —— 目的是**别每 30 秒就去撞一次**，
-    把 Outlook 自己的错误框刷屏。注意这个退避只影响"多久试一次"，
-    绝不能做成"在某个时间内不许连"：那会把「用户已经手动打开 Outlook」也一起挡掉。
+    邮箱暂时用不了（没网/被限流/服务端 5xx）时退避久一点 —— 目的是**别每 30 秒就去撞一次**。
+    注意这个退避只影响"多久试一次"，
+    绝不能做成"在某个时间内不许连"：那会把「用户已经恢复网络」也一起挡掉。
     """
-    return OUTLOOK_RETRY_DELAY if isinstance(ex, outlook.OutlookNotRunning) else None
+    return MAILBOX_RETRY_DELAY if isinstance(ex, outlook.MailboxUnavailable) else None
 
 
 # ── 监听控制器 ────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ class WatchController:
         self._after_id: Optional[str] = None
         self._errors = 0
         self._failed_rounds = 0
-        self._outlook_warned = False
+        self._mailbox_warned = False
         self._catchup_pending = False       # 本次会话是否还要做「启动补分类」
 
     # ── 状态 ──────────────────────────────────────────────────
@@ -179,7 +179,7 @@ class WatchController:
             return
         self._running = True
         self._errors = 0
-        self._outlook_warned = False
+        self._mailbox_warned = False
         self._catchup_pending = True        # 每次启动补分类一次（受 catchup_days 控制）
         self._notify("running", True)
         self._log(f"[watch] watching the inbox every {self._interval}s "
@@ -312,7 +312,6 @@ class WatchController:
             return {"action": action}
 
         if action == "tag-report":
-            outlook.ensure_sum_category(ns)
             outlook.write_categories(newest, [outlook.SUM_NAME])
             self._commit(next_seen)
             return {"action": action}
@@ -325,7 +324,6 @@ class WatchController:
                 return {"action": "skip-control"}
 
             letters = outlook.parse_sum_command(newest.Subject) or "sabc"
-            outlook.ensure_sum_category(ns)
             outlook.write_categories(newest, [outlook.SUM_NAME])
             self._log(f'[watch] "sum" command received (levels: {letters.upper()})')
             self._runner.set_phase(f"building the summary with the AI ({cfg.ai_active})")
@@ -339,12 +337,6 @@ class WatchController:
         # 关键：不要用 classify_inbox(days=None) —— 那会遍历整个收件箱并逐封读正文，
         # 大邮箱下要几分钟，期间什么都没分类、按钮还一直灰着。
         # 存量未分类邮件由 _catchup() 负责（见下），不混进这条路径。
-
-        # 全新用户的邮箱里没有 S/A/B/C 分类，必须先确保它们存在且颜色正确：
-        # 否则 Outlook 会把 Categories 里出现的陌生名字自动加成「无颜色」分类，
-        # 四档颜色编码就全丢了。
-        for change in outlook.ensure_categories(ns):
-            self._log(f"[watch] {change}")
 
         pending = outlook.collect_new_mail(ns, previous, days=CATCHUP_DAYS,
                                            max_items=MAX_MAIL_PER_ROUND,
@@ -400,7 +392,6 @@ class WatchController:
         if not reports:
             return 0
 
-        outlook.ensure_sum_category(ns)
         tagged = 0
         for msg in reports:
             try:
@@ -432,7 +423,6 @@ class WatchController:
         for msg in commands:
             letters = outlook.parse_sum_command(msg.Subject) or "sabc"
             self._log(f'[watch] "sum" command found (levels: {letters.upper()})')
-            outlook.ensure_sum_category(ns)
             outlook.write_categories(msg, [outlook.SUM_NAME])
             self._runner.set_phase(f"building the summary with the AI ({cfg.ai_active})")
             count = summarizer.summarize_inbox(cfg, letters, log=self._log)
@@ -451,9 +441,6 @@ class WatchController:
         `read_inbox(skip_classified=True)` 天然会跳过已打标签的、我们自己的总结邮件
         和 sum 指令邮件，所以重复触发是安全的。
         """
-        for change in outlook.ensure_categories(ns):
-            self._log(f"[watch] {change}")
-
         pending = outlook.read_inbox(ns, days=cfg.catchup_days,
                                      skip_classified=True, limit=MAX_MAIL_PER_ROUND,
                                      keep=self._candidate_filter(), log=self._log)
@@ -493,9 +480,9 @@ class WatchController:
     # ── 主线程：结果处理 ──────────────────────────────────────
     def _on_done(self, result: Dict[str, Any]) -> None:
         self._errors = 0
-        if self._outlook_warned:          # 之前提示过连不上，现在通了
+        if self._mailbox_warned:          # 之前提示过连不上，现在通了
             self._log("[watch] mailbox is reachable again")
-        self._outlook_warned = False      # 下次断了再提示一次
+        self._mailbox_warned = False      # 下次断了再提示一次
         action = result.get("action")
 
         try:
@@ -557,12 +544,12 @@ class WatchController:
     def _on_error(self, ex: BaseException) -> None:
         self._safe_notify("busy", False)
 
-        # Outlook 用不了（没开、正在启动、或启动失败）：不算失败、不累计、不暂停。
+        # 邮箱用不了（没网、被限流、服务端 5xx）：不算失败、不累计、不暂停。
         # 只提示一次，然后继续轮询 —— connect() 每轮都会再试，通了就自动接上。
-        if isinstance(ex, outlook.OutlookNotRunning):
+        if isinstance(ex, outlook.MailboxUnavailable):
             delay = retry_delay_for(ex)
-            if not self._outlook_warned:
-                self._outlook_warned = True
+            if not self._mailbox_warned:
+                self._mailbox_warned = True
                 self._log(f"[watch] mailbox is not available yet - {ex}")
                 self._log(f"[watch] still watching; retrying every {delay}s")
             self._schedule(delay)

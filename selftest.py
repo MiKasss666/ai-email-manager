@@ -1,19 +1,19 @@
-"""selftest.py — 纯逻辑自测：不连接 Outlook、不调用 AI、不消耗任何额度。
+﻿"""selftest.py — 纯逻辑自测：不连接邮箱、不调用 AI、不消耗任何额度。
 
 用法（在 Email_manager_beta 目录下）：
     py -3 selftest.py
 
-覆盖 config / ai.parse_json / classifier / summarizer 里所有不依赖 COM 的逻辑。
-旧版没有任何测试，规则改错只能等线上邮件暴露；这里是这套内核的第一道防线。
+覆盖 config / ai.parse_json / classifier / summarizer / mailmeta 里所有不依赖
+网络、UI 与登录凭据的逻辑。旧版没有任何测试，规则改错只能等线上邮件暴露；
+这里是这套内核的第一道防线。
+
+v3.0.0 起邮件后端只剩 Microsoft Graph：收件箱读取、写回、登录全部用假 client /
+假 session 打桩（见 [3e]、[11]~[14]、[16]、[17]），不联网、不碰真实邮箱。
 """
 import os
 from datetime import date, datetime, timedelta
 
-# 自测固定走 COM 后端：这一套断言验证的是「纯逻辑 + COM 那条路的行为」，
-# 必须确定性，不能受 config.json 里 mail_source 的影响。Graph 后端的断言见文末 [15]。
-os.environ["EM_MAIL_SOURCE"] = "outlook"
-
-from core import ai, classifier, config, outlook, summarizer  # noqa: E402
+from core import ai, classifier, config, mail as outlook, mailmeta, summarizer  # noqa: E402
 
 ok = 0
 
@@ -202,19 +202,30 @@ check("not_school_entryids 只列被判为非学校邮件的（供 watcher 记�
 print("[3c] apply_verdicts：非学校邮件一个字节都不写")
 
 
-class _WriteMsg:
-    """假 MailItem：只记录分类、标志位和 Save() 次数。"""
+class _WriteClient:
+    """假 GraphMail：记录每一次分类写回（真实现里就是 PATCH /me/messages/<id>）。"""
 
     def __init__(self):
+        self.calls = []
+
+    def set_categories(self, message_id, names, flag=None):
+        self.calls.append((message_id, list(names), flag))
+
+
+class _WriteMsg:
+    """假 GraphMessage：新后端没有 Save()，写回就是一次 client.set_categories()。"""
+
+    def __init__(self, client, entryid):
+        self.id = entryid
+        self.EntryID = entryid
+        self.Subject = ""
         self.Categories = ""
-        self.FlagStatus = None
-        self.saves = 0
-
-    def Save(self):
-        self.saves += 1
+        self._client = client
+        self.body_loaded = True
 
 
-_m_school, _m_other = _WriteMsg(), _WriteMsg()
+_wclient = _WriteClient()
+_m_school, _m_other = _WriteMsg(_wclient, "W-S"), _WriteMsg(_wclient, "W-N")
 _w_emails = [{"subject": "School stuff", "msg": _m_school},
              {"subject": "Shop promo", "msg": _m_other}]
 _w_verdicts = classifier.to_verdicts([{"学校": True, "级别": "S", "截止日期": None},
@@ -222,31 +233,81 @@ _w_verdicts = classifier.to_verdicts([{"学校": True, "级别": "S", "截止日
                                      2, _school_cfg)
 check("apply_verdicts 返回 (成功, 失败, 跳过)",
       classifier.apply_verdicts(_w_emails, _w_verdicts, log=lambda *a: None) == (1, 0, 1))
-check("学校邮件被写入分类", _m_school.Categories == "S" and _m_school.saves == 1)
-check("非学校邮件完全没被动过", _m_other.Categories == "" and _m_other.saves == 0)
+check("学校邮件被写入分类（S 且不加急 → 分类 + FLAG_NONE）",
+      _m_school.Categories == "S" and _wclient.calls == [("W-S", ["S"], mailmeta.FLAG_NONE)])
+check("非学校邮件完全没被动过",
+      _m_other.Categories == "" and all(call[0] != "W-N" for call in _wclient.calls))
 check("拿不到判定算失败（触发重试），不算跳过",
-      classifier.apply_verdicts([{"subject": "x", "msg": _WriteMsg()}], [None],
+      classifier.apply_verdicts([{"subject": "x", "msg": _WriteMsg(_wclient, "W-X")}], [None],
                                 log=lambda *a: None) == (0, 1, 0))
 
+
+class _FailingClient:
+    """假 client：每次 PATCH 都失败（被限流 / 没权限时的样子）。"""
+
+    def set_categories(self, message_id, names, flag=None):
+        raise RuntimeError("HTTP 503")
+
+
+check("写回失败算失败（不会静默吞掉）",
+      classifier.apply_verdicts([{"subject": "x", "msg": _WriteMsg(_FailingClient(), "W-E")}],
+                                _w_verdicts[:1], log=lambda *a: None) == (0, 1, 0))
+
 print("[3d] write_categories：只换自己的标签，用户自己的分类一律不动")
+# 合并规则（不误删用户分类）现在是 mailmeta.merge_categories 这个纯函数，
+# graph.write_categories / 旧 COM 实现都调它 —— 所以这里先测规则本身，再测写回通路。
+
+check("本系统标签集合 = S/A/B/C/Sum + 历史命名",
+      set(mailmeta.OUR_CATEGORY_NAMES) == {"S", "A", "B", "C", "Sum",
+                                           "S 紧急", "A 重要", "B 普通", "C 可忽略"})
+check("merge_categories：用户自己的分类被保留（并追加我们的级别）",
+      mailmeta.merge_categories(["跟进", "重要"], ["A"]) == ["跟进", "重要", "A"])
+check("merge_categories：我们自己的旧级别被替换，不叠加",
+      mailmeta.merge_categories(["S", "跟进"], ["B"]) == ["跟进", "B"])
+check("merge_categories：多档叠加的脏数据被收敛成一个级别",
+      mailmeta.merge_categories(["A", "B", "C"], ["S"]) == ["S"])
+check("merge_categories：历史命名（S 紧急）被顺手清掉",
+      mailmeta.merge_categories(["S 紧急", "学期"], ["C"]) == ["学期", "C"])
+check("merge_categories：报告标签 Sum 也属于我们自己，会被换掉",
+      mailmeta.merge_categories(["Sum", "归档"], ["A"]) == ["归档", "A"])
+check("merge_categories：原本没有任何分类时只写我们的",
+      mailmeta.merge_categories([], ["Sum"]) == ["Sum"])
+check("merge_categories：已有分类里的空白项被清掉",
+      mailmeta.merge_categories([" 跟进 ", "  "], ["A"]) == ["跟进", "A"])
+check("merge_categories：重判不叠加（对合并结果再合并一次，结果不变）",
+      mailmeta.merge_categories(
+          mailmeta.merge_categories(["S", "跟进"], ["A"]), ["A"]) == ["跟进", "A"])
+
+
+class _CatClient:
+    """假 GraphMail：记录 PATCH 出去的 (message_id, categories, flag)。"""
+
+    def __init__(self):
+        self.calls = []
+
+    def set_categories(self, message_id, names, flag=None):
+        self.calls.append((message_id, list(names), flag))
 
 
 class _CatMsg:
-    """假 MailItem：带一个已有的 Categories 字符串。"""
+    """假 GraphMessage：带一个已有的 Categories 字符串和一条写回通路。"""
 
-    def __init__(self, categories):
+    def __init__(self, categories, message_id="M-1"):
+        self.id = message_id
+        self.EntryID = message_id
         self.Categories = categories
-        self.FlagStatus = None
-        self.saves = 0
+        self._client = _CatClient()
 
-    def Save(self):
-        self.saves += 1
+    @property
+    def calls(self):
+        return self._client.calls
 
 
 _mc = _CatMsg("跟进, 重要")
 outlook.write_categories(_mc, ["A"])
-check("用户自己的分类被保留（并追加我们的级别）", _mc.Categories == "跟进, 重要, A")
-check("写回后确实 Save 了", _mc.saves == 1)
+check("write_categories 通过假 client 把合并结果 PATCH 出去",
+      _mc.calls == [("M-1", ["跟进", "重要", "A"], None)])
+check("写回后同一轮里的后续判断看到最新值", _mc.Categories == "跟进, 重要, A")
 
 _mc = _CatMsg("S, 跟进")
 outlook.write_categories(_mc, ["B"])
@@ -272,57 +333,68 @@ _mc = _CatMsg(" 跟进 ,  ")
 outlook.write_categories(_mc, ["A"])
 check("已有分类里的空白项被清掉", _mc.Categories == "跟进, A")
 
-check("本系统标签集合 = S/A/B/C/Sum + 历史命名",
-      set(outlook.OUR_CATEGORY_NAMES) == {"S", "A", "B", "C", "Sum",
-                                          "S 紧急", "A 重要", "B 普通", "C 可忽略"})
+_mc = _CatMsg("")
+outlook.write_categories(_mc, ["S"], mailmeta.FLAG_MARKED)
+check("红旗（FLAG_MARKED）被透传给写回",
+      _mc.calls == [("M-1", ["S"], mailmeta.FLAG_MARKED)])
+_mc = _CatMsg("")
+outlook.write_categories(_mc, ["S"], mailmeta.FLAG_NONE)
+check("不加急的 S 写回 FLAG_NONE", _mc.calls == [("M-1", ["S"], mailmeta.FLAG_NONE)])
+_mc = _CatMsg("")
+outlook.write_categories(_mc, ["A"], 99)
+check("flag 只认 FLAG_MARKED，其余一律归一成 FLAG_NONE",
+      _mc.calls == [("M-1", ["A"], mailmeta.FLAG_NONE)])
+
+_mc = _CatMsg("跟进")
+try:
+    _mc._client = None
+    outlook.write_categories(_mc, ["A"])
+    _no_client_guard = False
+except RuntimeError:
+    _no_client_guard = True
+check("拿到没有 _client 的对象时明确报错（不会静默什么都不做）", _no_client_guard)
 
 print("[3e] 一封读不出正文的邮件不能拖垮整轮（逐封兜错）")
+import core.graph as graph_mod  # noqa: E402
 
 
-class _PoisonMsg:
-    """假邮件：Body 会抛异常（IRM/加密邮件、正在被移动的邮件就是这样）。"""
+class _PoisonClient:
+    """假 GraphMail：一封邮件的正文下载会抛异常（IRM/加密、正在被移动的邮件就是这样）。
 
-    def __init__(self, subject):
-        self.Subject = subject
-        self.SenderName = "Someone"
-        self.SenderEmailAddress = "a@ust.hk"
-        self.EntryID = "P-" + subject
-        self.Categories = ""
-        self.ReceivedTime = datetime.now()
+    注意这里刻意**只替换 client**、仍然用真的 GraphSession：单封正文下载失败的
+    兜错点在 GraphSession.fill_body（失败只留摘要 + 标记已加载），这是产品行为本体。
+    """
 
-    @property
-    def Body(self):
-        raise RuntimeError("Body unavailable (IRM/encrypted or item moved)")
+    def __init__(self, raws):
+        self._raws = raws
+        self.fetched = []
 
+    def inbox_raw(self, top=10, days=None, select=""):
+        return list(self._raws)
 
-class _PoisonItems:
-    def __init__(self, msgs):
-        self._msgs = msgs
-
-    def Sort(self, *_args):
-        pass
-
-    def __iter__(self):
-        return iter(self._msgs)
+    def fetch_body(self, message_id):
+        self.fetched.append(message_id)
+        if message_id == "P-BAD":
+            raise RuntimeError("Body unavailable (IRM/encrypted or item moved)")
+        return "（正文：" + message_id + "）"
 
 
-class _PoisonNS:
-    def __init__(self, msgs):
-        self._msgs = msgs
-
-    def GetDefaultFolder(self, _fid):
-        msgs = self._msgs
-
-        class _Folder:
-            Items = _PoisonItems(msgs)
-        return _Folder()
+def _raw_mail(message_id, subject, sender="someone@ust.hk"):
+    return {"id": message_id, "subject": subject,
+            "from": {"emailAddress": {"name": "Someone", "address": sender}},
+            "receivedDateTime": (datetime.utcnow() - timedelta(days=1))
+            .strftime("%Y-%m-%dT%H:%M:%SZ"), "categories": [],
+            "webLink": "https://outlook.office.com/x/" + message_id}
 
 
-_poison_msgs = [_PoisonMsg("good-1"), _PoisonMsg("poison"), _PoisonMsg("good-2")]
+_pclient = _PoisonClient([_raw_mail("P-1", "good-1"),
+                          _raw_mail("P-BAD", "poison"),
+                          _raw_mail("P-2", "good-2")])
+_pns = graph_mod.GraphSession(_pclient)
 _poison_ok = True
 _poison_got = []
 try:
-    _poison_got = outlook.read_inbox(_PoisonNS(_poison_msgs), days=7, log=lambda *a: None)
+    _poison_got = outlook.read_inbox(_pns, days=7, log=lambda *a: None)
 except Exception as _ex:                      # 旧行为：整轮直接抛异常
     _poison_ok = False
     print(f"      read_inbox raised: {type(_ex).__name__}: {_ex}")
@@ -330,7 +402,33 @@ check("坏邮件不再让整轮抛异常", _poison_ok)
 check("三封邮件都在（坏的那封留空正文，不丢）",
       [m["subject"] for m in _poison_got] == ["good-1", "poison", "good-2"])
 check("坏邮件其余字段仍可用（靠主题也能判级）",
-      _poison_got[1]["body"] == "" and _poison_got[1]["entryid"] == "P-poison")
+      _poison_got[1]["body"] == "" and _poison_got[1]["entryid"] == "P-BAD")
+check("好邮件的正文正常下载进来",
+      _poison_got[0]["body"] == "（正文：P-1）" and _poison_got[2]["body"] == "（正文：P-2）")
+check("坏邮件被标记为「正文已尝试加载」，不会每轮重复撞同一个错",
+      _pns.recent(days=7)[1].body_loaded is True and _pclient.fetched.count("P-BAD") == 1)
+
+# 补充：更下层（网络）失败时 fill_body 也不会把异常甩给调用方 —— 只有
+# 「可重试」的 GraphError 才转成 MailboxUnavailable（让整轮退避，而不是写残缺结果）。
+class _TransientClient:
+    def fetch_body(self, _message_id):
+        raise graph_mod.GraphError("HTTP 429 Too Many Requests", 429)
+
+
+_tmsg = graph_mod.GraphMessage(_raw_mail("T-1", "throttled"), client=None)
+_tmsg.body_loaded = False
+try:
+    graph_mod.GraphSession(_TransientClient()).fill_body(_tmsg)
+    _transient_raised = False
+except mailmeta.MailboxUnavailable:
+    _transient_raised = True
+check("正文下载被限流 → 转成 MailboxUnavailable（整轮退避，不用残缺正文判级）",
+      _transient_raised and _tmsg.body_loaded is False)
+
+# 顺带说明（不写成断言）：core/graph.py 的 _collect 本身没有 try/except 包住
+# ns.fill_body()，单封兜错完全依赖 GraphSession.fill_body —— 换掉 session 实现时要注意。
+print("      note: per-mail fault tolerance lives in GraphSession.fill_body, "
+      "not in _collect()")
 
 print("[3f] config.save 的临时文件名带 pid（两个实例不会互相写坏配置）")
 import tempfile  # noqa: E402
@@ -554,8 +652,8 @@ check("改 User info 后天数被重新归一", _edited.summary_days == 3)
 check("往返不改变身份字段", _edited.email == cfg.email and _edited.faculty == cfg.faculty)
 
 print("[8] 自动监听的状态机（plan_tick / advance_policy，纯函数）")
-from gui.watcher import (DEFAULT_INTERVAL, MAX_INTERVAL, MIN_INTERVAL,  # noqa: E402
-                         OUTLOOK_RETRY_DELAY, advance_policy, clamp_interval, plan_tick,
+from gui.watcher import (DEFAULT_INTERVAL, MAILBOX_RETRY_DELAY, MAX_INTERVAL,  # noqa: E402
+                         MIN_INTERVAL, advance_policy, clamp_interval, plan_tick,
                          retry_delay_for)
 
 _seen = "ID-A"
@@ -583,13 +681,13 @@ check("间隔非数字 → 默认值", clamp_interval("abc") == DEFAULT_INTERVAL
 check("间隔正常值原样返回", clamp_interval(45) == 45)
 
 # ── 失败后的重试节奏（退避，而不是"一段时间内禁止连接"）────────
-check("Outlook 暂时用不了 → 退避到 120 秒",
-      retry_delay_for(outlook.OutlookNotRunning("nope")) == OUTLOOK_RETRY_DELAY)
+# 注意退避只影响「下一次多久再试」，不会做成「在这段时间内不许连」：
+# 那样用户再怎么修网络也只能干等。Graph 后端每轮都重新 connect()。
+check("邮箱暂时用不了（MailboxUnavailable）→ 退避到 120 秒",
+      retry_delay_for(outlook.MailboxUnavailable("no network")) == MAILBOX_RETRY_DELAY)
+check("另一个模块里的同一个异常类也认（facade 和 graph 共用一个）",
+      retry_delay_for(mailmeta.MailboxUnavailable("throttled")) == MAILBOX_RETRY_DELAY)
 check("其它错误 → 用默认间隔（None）", retry_delay_for(ValueError("boom")) is None)
-# 注意：这条断言在 2026-10 改过。原来的写法是"不许存在 _last_launch_attempt"，
-# 目的是防止把退避挡在 Dispatch 前面（那样用户手动开了 Outlook 也连不上）。
-# 现在退避确实存在，但只用于「启动」这一条路径 —— 真正的防回归断言在 [15] 节：
-# 它检查 connect() 里 _dispatch() 出现在退避判断**之后**，即附加永不被挡。
 
 # ── 启动补分类的范围设置 ──────────────────────────────────────
 check("catchup_days 默认 7 天", config.from_dict({}).catchup_days == 7)
@@ -618,146 +716,70 @@ check("成功后失败计数清零",
 check("部分成功也算有失败（未贴标签的会重试）",
       advance_policy(_pending, 1, 0, "ID-3")[0] is None)
 
-print("[9] Outlook 进程检测（启动前的防撞车判断）")
-import sys  # noqa: E402
-from core.outlook import _process_running  # noqa: E402
-
-check("OutlookNotRunning 是 RuntimeError 子类", issubclass(outlook.OutlookNotRunning, RuntimeError))
-# 用「自己所在的进程」做阳性用例：一定能枚举到，且不依赖环境里跑着哪些别的程序
-check("进程检测：能枚举到自己 → True",
-      _process_running(os.path.basename(sys.executable)) is True)
-check("进程检测：不存在的进程 → False", _process_running("no_such_process_xyz.exe") is False)
-check("进程检测：大小写不敏感",
-      _process_running(os.path.basename(sys.executable).upper()) is True)
-check("进程检测：空名字 → False", _process_running("") is False)
-
-check("完整性级别检测可用（Windows 上不该是 unknown）", outlook.integrity_level() != "unknown")
-check("完整性级别是已知取值之一",
-      outlook.integrity_level() in ("Untrusted", "Low", "Medium", "High", "System"))
-check("父进程信息可读（形如 name (pid N)）",
-      outlook.parent_process().endswith(")") and "pid " in outlook.parent_process())
-
-print("[10] connect() 不许把「附加」也挡掉（针对实际故障的回归测试）")
-# 这一节来自一次真实故障：我在 Dispatch 前面加了"启动失败后 120 秒冷却"，
-# 结果用户手动打开 Outlook 之后照样报
-#   "could not be started 63s ago; not retrying for another 57s"
-# —— 冷却把「附加到已在运行的实例」也一起挡掉了。
-# 下面用桩替换 Dispatch，确保**每一次连接尝试都会真的去 Dispatch**。
-_saved_dispatch = outlook.win32com.client.Dispatch
-_saved_launch = outlook._launch_outlook
-_saved_minimize = outlook._minimize_outlook
-_saved_process_running = outlook._outlook_process_running
-_saved_launch_attempt = outlook._last_launch_attempt
-_silent = lambda *a, **k: None
-_launched = []
-import time as _time  # noqa: E402  桩里复刻退避计时用
-
-
-class _FakeApp:
-    def GetNamespace(self, name):
-        return {"ns": name}
-
-
-try:
-    # 自测**绝不能启动用户的 Outlook**：把「启动」和「最小化」换成桩，
-    # 并把「有没有 OUTLOOK.EXE 进程」固定成否 —— 这样代码走的仍是启动分支，
-    # 但真正干活的 subprocess.Popen 不会执行（曾经真的把用户的 Outlook 拉起来过）。
-    def _fake_launch(log):
-        # 复刻真实 _launch_outlook 的关键副作用：记下本次启动尝试的时间（退避靠它）
-        _launched.append("launch")
-        outlook._last_launch_attempt = _time.time()
-
-    outlook._launch_outlook = _fake_launch
-    outlook._minimize_outlook = lambda app: None
-    outlook._outlook_process_running = lambda: False
-    outlook._last_launch_attempt = 0.0
-
-    outlook.win32com.client.Dispatch = lambda progid: _FakeApp()
-    _app, _ns = outlook.connect(log=_silent)
-    check("Dispatch 能拿到实例时 connect 成功", _ns == {"ns": "MAPI"})
-    check("允许启动时走了一次「启动」分支（已被桩住，不会真的启动 Outlook）",
-          len(_launched) == 1)
-
-    _calls = []
-
-    def _boom(progid):
-        _calls.append(progid)
-        raise RuntimeError("simulated failure")
-
-    outlook.win32com.client.Dispatch = _boom
-    _raised = 0
-    for _ in range(3):
-        try:
-            outlook.connect(log=_silent)
-        except outlook.OutlookNotRunning as ex:
-            _raised += 1
-            check("失败时抛的是 OutlookNotRunning 且说明原因", "Could not connect" in str(ex))
-    check("连续 3 次失败都抛 OutlookNotRunning", _raised == 3)
-    check("连续 3 次都真的尝试了 Dispatch（没有被冷却/宽限期挡住）", len(_calls) == 3)
-    check("尝试的是 Outlook.Application", set(_calls) == {"Outlook.Application"})
-    check("退避期内不再重复尝试启动 Outlook", len(_launched) == 1)
-finally:
-    outlook.win32com.client.Dispatch = _saved_dispatch
-    outlook._launch_outlook = _saved_launch
-    outlook._minimize_outlook = _saved_minimize
-    outlook._outlook_process_running = _saved_process_running
-    outlook._last_launch_attempt = _saved_launch_attempt
-
-print("[11] 漏打 Sum 标签的总结报告能被找出来（假 COM 对象，不连 Outlook）")
+print("[11] 漏打 Sum 标签的总结报告能被找出来（假 GraphSession，不连邮箱）")
 # 回归来源：plan_tick 只看"最新那一封"，所以只要报告之后又来了一封别的邮件，
 # classify 路径会把报告当控制邮件跳过 —— 它就永远轮不到打标签（实际发生过）。
 from datetime import datetime as _dt  # noqa: E402
 
 
 class _FakeMsg:
-    def __init__(self, subject, categories, days_ago=0):
+    """假 GraphMessage：只摆出 mailmeta / 采集层会用到的属性（新后端没有 COM）。"""
+
+    def __init__(self, subject, categories="", days_ago=0, entryid=None, body=""):
         self.Subject = subject
         self.Categories = categories
         self.ReceivedTime = _dt.now() - timedelta(days=days_ago)
-        self.EntryID = "E-%d-%s" % (days_ago, subject[:10])
+        self.EntryID = entryid or ("E-%d-%s" % (days_ago, subject[:10]))
+        self.SenderName = "Someone"
+        self.SenderEmailAddress = "someone@ust.hk"
+        self.Body = body
+        self.WebLink = ""
+        self.body_loaded = bool(body)
+        self.level_hint = None
+
+    def __repr__(self):
+        return f"<FakeMsg {self.EntryID} {self.Subject[:30]!r}>"
 
 
-class _FakeItems:
+class _FakeSession:
+    """假 GraphSession：只有 recent() 与 fill_body() 两个端口。
+
+    `days` 只是**记录**下来供断言（真正的窗口过滤在 Graph 后端做：$filter），
+    这样测试既验证「上层确实传了窗口」，又不必自己复刻一遍后端逻辑。
+    """
+
     def __init__(self, msgs):
-        self._msgs = msgs
+        self._msgs = list(msgs)
+        self.recent_calls = []
+        self.filled = []
 
-    def Restrict(self, _filter):
-        return list(self._msgs)          # 假实现：返回全部，让代码里的二次过滤起作用
+    def recent(self, *, days=None, force=False):
+        self.recent_calls.append({"days": days, "force": force})
+        return list(self._msgs)
 
-
-class _FakeNS:
-    def __init__(self, msgs):
-        self._msgs = msgs
-
-    def GetDefaultFolder(self, _fid):
-        msgs = self._msgs
-
-        class _Folder:
-            Items = _FakeItems(msgs)
-        return _Folder()
+    def fill_body(self, msg):
+        self.filled.append(msg.EntryID)
+        msg.body_loaded = True
 
 
-_msgs = [
+_fake_session = _FakeSession([
     _FakeMsg("📬 邮件总结（全部）· 最近7天", "Sum", 0),        # 已打标签 → 不返回
-    _FakeMsg("📬 邮件总结（全部）· 最近7天", "", 1),            # 漏标签 → 返回
-    _FakeMsg("📬 邮件总结（全部）· 最近7天", "", 40),           # 超出 30 天 → 不返回
-    _FakeMsg("转发：邮件总结 是什么", "", 2),                   # 主题含标记 → 按现有定义算报告
-    _FakeMsg("[Press Release] HKUST Convenes Global Leaders", "", 1),   # 普通邮件 → 不返回
-]
-_got = outlook.untagged_reports(_FakeNS(_msgs), days=30)
+    _FakeMsg("📬 邮件总结（全部）· 最近7天", "", 1, entryid="R-1"),   # 漏标签 → 返回
+    _FakeMsg("📬 邮件总结（全部）· 最近7天", "", 40, entryid="R-2"),  # 超出 30 天 → 不返回
+    _FakeMsg("转发：邮件总结 是什么", "", 2, entryid="R-3"),    # 主题含标记 → 算报告
+    _FakeMsg("[Press Release] HKUST Convenes Global Leaders", "", 1, entryid="R-4"),  # 普通邮件
+])
+_msgs = _fake_session._msgs
+_got = outlook.untagged_reports(_fake_session, days=30)
 check("只返回漏标签的报告（已打标签的跳过）", _msgs[0] not in _got)
 check("窗口内漏标签的报告被找到", _msgs[1] in _got)
 check("超出天数窗口的不返回", _msgs[2] not in _got)
 check("普通邮件不返回", _msgs[4] not in _got)
 check("返回顺序与传入顺序一致", _got == [_msgs[1], _msgs[3]])
-check("days=None 时不限时间窗口", _msgs[2] in outlook.untagged_reports(_FakeNS(_msgs), days=None))
-check("查询不被支持时返回空列表而不是崩掉",
-      outlook.untagged_reports(type("NS", (), {"GetDefaultFolder": lambda s, f: type(
-          "F", (), {"Items": type("I", (), {"Restrict": lambda s, x: (_ for _ in ()).throw(
-              RuntimeError("nope"))})()})()})(), days=30) == [])
-check("筛选条件用的是 DASL 主题属性",
-      "httpmail:subject" in outlook.REPORT_FILTER
-      and outlook.REPORT_SUBJECT_MARK in outlook.REPORT_FILTER)
+check("days 窗口被原样传给后端（时间过滤由 Graph 的 $filter 做）",
+      _fake_session.recent_calls[-1]["days"] == 30)
+check("days=None 时不限时间窗口",
+      _msgs[2] in outlook.untagged_reports(_FakeSession(_msgs), days=None))
 
 # 中英标记都要认：报告主题跟随 language，但切换语言后历史报告仍须被识别
 check("识别报告：中文主题 → True", outlook.is_report_subject("📬 邮件总结（全部）· 最近7天"))
@@ -765,14 +787,13 @@ check("识别报告：英文主题 → True",
       outlook.is_report_subject("📬 Email summary (all levels) · last 7 days"))
 check("识别报告：普通邮件 → False", outlook.is_report_subject("HKUST Daily Event Alert") is False)
 check("识别报告：空主题 → False", outlook.is_report_subject("") is False)
-check("英文筛选条件也用 DASL 且带英文标记",
-      outlook.report_filter(outlook.REPORT_SUBJECT_MARK_EN) ==
-      '@SQL="urn:schemas:httpmail:subject" LIKE \'%Email summary%\'')
-check("两种标记合并查询时按 EntryID 去重（假 Restrict 返回全部，正好考验去重）",
-      len(_got) == len({m.EntryID for m in _got}))
+_both_marks = [_FakeMsg("📬 邮件总结 / Email summary", "", 1, entryid="R-5")]
+check("同时命中中英标记的邮件只返回一次（不再合并两次查询）",
+      [m.EntryID for m in outlook.untagged_reports(_FakeSession(_both_marks), days=30)]
+      == ["R-5"])
 _en_msgs = [_FakeMsg("📬 Email summary (all levels) · last 7 days", "", 1)]
 check("英文主题的报告同样能被找出来（切语言后不会被误分级）",
-      [m.EntryID for m in outlook.untagged_reports(_FakeNS(_en_msgs), days=30)]
+      [m.EntryID for m in outlook.untagged_reports(_FakeSession(_en_msgs), days=30)]
       == [_en_msgs[0].EntryID])
 
 check("主题跟随语言：zh → 含中文标记",
@@ -784,64 +805,30 @@ check("主题里的级别标签也跟着语言", "(all levels)" in _en_subject)
 
 print("[12] 埋在别的邮件下面的 sum 指令也能被找到（同一类洞的修复）")
 
-
-class _OrderedItems:
-    """假 Items：支持 Sort 和迭代（pending_sum_commands 走的是遍历路径）。"""
-
-    def __init__(self, msgs):
-        self._msgs = msgs
-
-    def Sort(self, *_args):
-        pass
-
-    def __iter__(self):
-        return iter(self._msgs)
-
-
-class _CmdMsg:
-    def __init__(self, subject, categories, entryid, days_ago=0, hours_ago=0):
-        self.Subject = subject
-        self.Categories = categories
-        self.EntryID = entryid
-        self.ReceivedTime = _dt.now() - timedelta(days=days_ago, hours=hours_ago)
-
-
-class _CmdNS:
-    def __init__(self, msgs):
-        self._msgs = msgs
-
-    def GetDefaultFolder(self, _fid):
-        msgs = self._msgs
-
-        class _Folder:
-            Items = _OrderedItems(msgs)
-        return _Folder()
-
-
-# 关键场景：指令**不是**最新那一封（下面第 2 封才是指令），这正是原来会丢指令的情况
+# 关键场景：指令**不是**最新那一封（第 3、6 封才是指令），这正是原来会丢指令的情况
 _cmds = [
-    _CmdMsg("[Press Release] HKUST Convenes Global Leaders", "", "ID-1", hours_ago=0),
-    _CmdMsg("sum", "Sum", "ID-2", hours_ago=1),          # 已处理 → 不该再返回
-    _CmdMsg("sum sa", "", "ID-3", hours_ago=2),          # 未处理 → 应返回
-    _CmdMsg("Your monthly summary is ready", "", "ID-4", hours_ago=3),   # 非指令 → 不返回
-    _CmdMsg("Summary of AWS billing", "", "ID-5", hours_ago=4),          # 非指令 → 不返回
-    _CmdMsg("sum", "", "ID-6", hours_ago=5),             # 未处理 → 应返回
-    _CmdMsg("OLDER-THAN-BASELINE", "", "ID-7", hours_ago=6),
+    _FakeMsg("[Press Release] HKUST Convenes Global Leaders", "", entryid="ID-1"),
+    _FakeMsg("sum", "Sum", entryid="ID-2"),              # 已处理 → 不该再返回
+    _FakeMsg("sum sa", "", entryid="ID-3"),              # 未处理 → 应返回
+    _FakeMsg("Your monthly summary is ready", "", entryid="ID-4"),   # 非指令 → 不返回
+    _FakeMsg("Summary of AWS billing", "", entryid="ID-5"),          # 非指令 → 不返回
+    _FakeMsg("sum", "", entryid="ID-6"),                 # 未处理 → 应返回
+    _FakeMsg("OLDER-THAN-BASELINE", "", entryid="ID-7"),
 ]
-_found = outlook.pending_sum_commands(_CmdNS(_cmds), "ID-7", days=7)
+_cmd_session = _FakeSession(_cmds)
+_found = outlook.pending_sum_commands(_cmd_session, "ID-7", days=7)
 check("埋在普通邮件下面的指令被找到", [m.EntryID for m in _found] == ["ID-3", "ID-6"])
 check("已打过 Sum 标签的指令不重复执行", all(m.EntryID != "ID-2" for m in _found))
 check("主题含 summary 的普通邮件不会被当指令", all(m.EntryID not in ("ID-4", "ID-5") for m in _found))
 check("走到基线（上次看过的位置）就停，不看更旧的",
       all(m.EntryID != "ID-7" for m in _found))
 check("max_items 上限生效",
-      len(outlook.pending_sum_commands(_CmdNS(_cmds), "ID-7", days=7, max_items=1)) == 1)
-check("超出天数窗口的指令不返回",
-      outlook.pending_sum_commands(_CmdNS([_CmdMsg("sum", "", "ID-9", days_ago=30)]),
-                                   None, days=7) == [])
+      len(outlook.pending_sum_commands(_FakeSession(_cmds), "ID-7", days=7, max_items=1)) == 1)
+check("天数窗口被原样传给后端（$filter 由 Graph 后端做）",
+      _cmd_session.recent_calls == [{"days": 7, "force": False}])
 check("没有基线时（首次运行）也能扫到窗口内的指令",
-      len(outlook.pending_sum_commands(_CmdNS([_CmdMsg("sum", "", "ID-9", hours_ago=1)]),
-                                       None, days=7)) == 1)
+      len(outlook.pending_sum_commands(
+          _FakeSession([_FakeMsg("sum", "", entryid="ID-9")]), None, days=7)) == 1)
 
 print("[13] 总结要点：被截断/失败不再整批留空")
 import json as _json  # noqa: E402
@@ -866,48 +853,25 @@ check("截断判断：纯文字说明 → False（不是截断，是模型跑偏
       ai.looks_truncated("我不太确定该怎么总结这些邮件。") is False)
 
 print("[14] 连接日志的心跳抑制（监听每 30 秒一轮，不能刷屏）")
-outlook._seen_notices.clear()
+# _notice 在 v3.0.0 改名成 mailmeta.note_once；mail 门面继续导出这个名字。
+mailmeta._seen_notices.clear()
 _notice_calls: list = []
 _outlook_log = lambda m: _notice_calls.append(m)   # noqa: E731
 
+check("门面导出的 note_once 就是 mailmeta 的实现（不会出现两份状态）",
+      outlook.note_once is mailmeta.note_once)
 check("第一次的连接日志会打出来",
-      outlook._notice(_outlook_log, "attach", "attaching") is True)
+      outlook.note_once(_outlook_log, "connect", "connecting") is True)
 check("同一个 key 再来就被抑制（这就是刷屏的来源）",
-      outlook._notice(_outlook_log, "attach", "attaching") is False)
-check("抑制不影响别的 key", outlook._notice(_outlook_log, "attached", "attached") is True)
-check("换个状态（如改成要启动 Outlook）仍然会打",
-      outlook._notice(_outlook_log, "launch", "trying to start") is True)
-check("实际只打了 3 条，而不是 4 条", _notice_calls == ["attaching", "attached", "trying to start"])
-outlook._seen_notices.clear()
+      outlook.note_once(_outlook_log, "connect", "connecting") is False)
+check("抑制不影响别的 key", outlook.note_once(_outlook_log, "connected", "connected") is True)
+check("换个状态（如重连 / 退避）仍然会打",
+      outlook.note_once(_outlook_log, "retry", "retrying soon") is True)
+check("实际只打了 3 条，而不是 4 条",
+      _notice_calls == ["connecting", "connected", "retrying soon"])
+mailmeta._seen_notices.clear()
 check("清空后可以重新打（模拟新一次会话）",
-      outlook._notice(_outlook_log, "attach", "attaching") is True)
-
-print("[15] 启动 Outlook 的退避（只约束「启动」，绝不约束「附加」）")
-import time as _time  # noqa: E402
-
-check("能找到 OUTLOOK.EXE（本机装了 Office）", bool(outlook.outlook_exe_path()))
-if outlook.outlook_exe_path():
-    check("定位到的路径确实存在", os.path.exists(outlook.outlook_exe_path()))
-    check("路径以 OUTLOOK.EXE 结尾", outlook.outlook_exe_path().upper().endswith("OUTLOOK.EXE"))
-
-_saved_launch = outlook._last_launch_attempt
-try:
-    outlook._last_launch_attempt = 0.0
-    check("从未尝试过 → 允许启动", outlook._launch_allowed() is True)
-    outlook._last_launch_attempt = _time.time()
-    check("刚尝试过 → 退避期内不再启动", outlook._launch_allowed() is False)
-    outlook._last_launch_attempt = _time.time() - (outlook.LAUNCH_BACKOFF_SECONDS + 1)
-    check("超过退避时长 → 重新允许启动", outlook._launch_allowed() is True)
-finally:
-    outlook._last_launch_attempt = _saved_launch
-
-# 这一条是防回归的关键：退避**不能**出现在 Dispatch 之前
-import inspect as _inspect  # noqa: E402
-_src = _inspect.getsource(outlook.connect)
-check("connect() 里 Dispatch 出现在退避判断之后（退避不会挡掉附加）",
-      _src.find("_dispatch()") > _src.find("_launch_allowed()"))
-check("退避提示里有明确的人工处理指引",
-      "open Outlook yourself" in _inspect.getsource(outlook._notice_backoff))
+      outlook.note_once(_outlook_log, "connect", "connecting") is True)
 
 _cfg = config.from_dict({"email": "a@b.c", "language": "zh", "batch_size": 40,
                          "ai": {"active": "x", "profiles": {"x": {"type": "cli"}}}})
@@ -995,20 +959,16 @@ try:
 finally:
     ai.ask = _saved_ask
 
-print("[14] 采集层过滤器：已判定为非学校邮件的 EntryID 不再重复送 AI")
+print("[14b] 采集层过滤器：已判定为非学校邮件的 EntryID 不再重复送 AI")
 
 
-class _SchoolMsg:
+class _SchoolMsg(_FakeMsg):
     """假邮件。被过滤掉的邮件，其 Body 属性会抛异常 —— 只要过滤器在 message_info()
     之前生效，就绝不会碰到它；碰到了就是回归。"""
 
     def __init__(self, subject, sender, entryid, days_ago=0):
-        self.Subject = subject
-        self.SenderName = "Someone"
+        super().__init__(subject, "", days_ago=days_ago, entryid=entryid)
         self.SenderEmailAddress = sender
-        self.EntryID = entryid
-        self.Categories = ""
-        self.ReceivedTime = _dt.now() - timedelta(days=days_ago)
         # 独立按发件人域名判断，不抄代码的结论
         self._school = str(sender).lower().endswith("ust.hk")
 
@@ -1018,17 +978,9 @@ class _SchoolMsg:
             raise RuntimeError("被过滤掉的邮件不该读正文")
         return "（校方邮件正文）"
 
-
-class _SchoolNS:
-    def __init__(self, msgs):
-        self._msgs = msgs
-
-    def GetDefaultFolder(self, _fid):
-        msgs = self._msgs
-
-        class _Folder:
-            Items = _OrderedItems(msgs)
-        return _Folder()
+    @Body.setter
+    def Body(self, _value):
+        pass                                  # 父类会在 __init__ 里赋 Body，这里忽略
 
 
 _smsgs = [
@@ -1039,7 +991,7 @@ _smsgs = [
     _SchoolMsg("sum", "me@connect.ust.hk", "S-3", days_ago=3),        # 指令邮件 → 照旧不进分级
     _SchoolMsg("📬 邮件总结（全部）· 最近7天", "me@connect.ust.hk", "S-4", days_ago=1),  # 报告 → 照旧跳过
 ]
-_sns = _SchoolNS(_smsgs)
+_sns = _FakeSession(_smsgs)
 # watcher 会把「判定为非学校邮件」的 EntryID 记进 watch_state.json，这里模拟同一份名单
 _ignore = {"N-1", "N-2"}
 
@@ -1049,49 +1001,106 @@ def _keep(msg):
 
 
 _slog = []
-
-_sread = outlook.read_inbox(_sns, days=7, skip_classified=True,
-                            keep=_keep, log=_slog.append)
+_sread_ok = True
+_sread = []
+try:
+    _sread = outlook.read_inbox(_sns, days=7, skip_classified=True,
+                                keep=_keep, log=_slog.append)
+except Exception as _ex:                      # 过滤器若失效，message_info 会去读 Body 并炸
+    _sread_ok = False
+    print(f"      read_inbox raised: {type(_ex).__name__}: {_ex}")
+check("被过滤的邮件连正文都不会被读（过滤器跑在 message_info 之前）", _sread_ok)
 check("read_inbox：名单里的邮件不再采集", [m["entryid"] for m in _sread] == ["S-1", "S-2"])
+check("read_inbox：只给通过过滤器的邮件下载正文",
+      sorted(_sns.filled) == ["S-1", "S-2"])
 check("read_inbox：被过滤的邮件记了条数",
       any("skipped 2 mail(s)" in m for m in _slog))
 check("read_inbox：sum 指令与总结报告照旧不进分级",
       all(m["entryid"] not in ("S-3", "S-4") for m in _sread))
 
 _slog.clear()
-_scollect = outlook.collect_new_mail(_sns, "S-3", days=7, max_items=100,
+_snc = _FakeSession(_smsgs)
+_scollect = outlook.collect_new_mail(_snc, "S-3", days=7, max_items=100,
                                      keep=_keep, log=_slog.append)
 check("collect_new_mail：走到基线为止，且跳过名单里的邮件",
       [m["entryid"] for m in _scollect] == ["S-1", "S-2"])
 check("collect_new_mail：被过滤的邮件同样记条数",
       any("skipped 2 mail(s)" in m for m in _slog))
+check("collect_new_mail：正文只为真正要判级的邮件下载",
+      sorted(_snc.filled) == ["S-1", "S-2"])
 
 check("limit 只数通过过滤器的邮件",
-      [m["entryid"] for m in outlook.read_inbox(_sns, limit=1, days=7,
+      [m["entryid"] for m in outlook.read_inbox(_FakeSession(_smsgs), limit=1, days=7,
                                                 keep=_keep, log=lambda *a: None)]
       == ["S-1"])
 
-print("[16] 邮件后端选择（graph / outlook）与 Graph 后端的纯逻辑")
-import core.graph as graph_mod                                 # noqa: E402
+print("[14c] 报告补标签：失败只记一条日志，不拖垮监听那一轮")
+# 旧 COM 后端里「Restrict 查询不被支持时返回空列表而不是崩掉」这一条，现在落在
+# watcher._tag_reports 的 try/except 上（扫描失败不影响本轮分级）。
+from gui.watcher import WatchController as _WatchController  # noqa: E402
+
+
+class _PhaseRunner:
+    def set_phase(self, _text):
+        pass
+
+
+_wlogs: list = []
+_wc = _WatchController(object(), _PhaseRunner(), lambda: config.from_dict({}),
+                       _wlogs.append, lambda *a: None)
+_saved_untagged = outlook.untagged_reports
+try:
+    def _boom_scan(_ns, days=30):
+        raise RuntimeError("mailbox hiccup")
+
+    outlook.untagged_reports = _boom_scan
+    check("扫描报告失败 → 返回 0 并记一条日志（不把异常抛给调用方）",
+          _wc._tag_reports(object()) == 0
+          and any("could not scan for untagged reports" in m for m in _wlogs))
+finally:
+    outlook.untagged_reports = _saved_untagged
+
+_rcat_client = _CatClient()
+_reports = [_FakeMsg("📬 邮件总结（全部）· 最近7天", "", 1, entryid="R-9")]
+_reports[0]._client = _rcat_client
+try:
+    outlook.untagged_reports = lambda _ns, days=30: list(_reports)
+    _tagged_count = _wc._tag_reports(object())
+finally:
+    outlook.untagged_reports = _saved_untagged
+check("漏标签的报告被补上 Sum，且写回走的是 client.set_categories",
+      _tagged_count == 1 and _reports[0].Categories == "Sum"
+      and _rcat_client.calls == [("R-9", ["Sum"], None)])
+
+print("[16] 邮件后端：只有 Microsoft Graph（v3.0.0 起没有 COM 后端了）")
 import core.mail as mail_mod                                   # noqa: E402
 
-check("自测固定走 COM 后端（避免联网/登录）", mail_mod.BACKEND == "outlook")
-check("两个后端共用同一个「连不上」异常类（否则 watcher 的 isinstance 会失效）",
-      graph_mod.OutlookNotRunning is outlook.OutlookNotRunning)
+check("后端标识就是 graph", mail_mod.BACKEND == "graph" and outlook.BACKEND == "graph")
+check("backend_module() 指向 core.graph", outlook.backend_module() is graph_mod)
+check("mail 门面与 graph 共用同一个「邮箱暂时不可用」异常类（否则 watcher 的 isinstance 会失效）",
+      graph_mod.MailboxUnavailable is outlook.MailboxUnavailable is mailmeta.MailboxUnavailable)
 check("mail 暴露的端口名齐全",
       all(hasattr(mail_mod, name) for name in
-          ("connect", "read_inbox", "collect_new_mail", "write_categories", "send_html",
-           "newest_message", "message_info", "read_recent", "pending_sum_commands",
-           "untagged_reports", "ensure_categories", "ensure_sum_category",
-           "existing_categories", "our_category_colors", "category_names",
-           "has_our_category", "parse_sum_command", "is_report", "integrity_level")))
-check("mail.describe() 说得清当前后端", "outlook" in mail_mod.describe())
-
-check("mail_source 默认是 graph", config.from_dict({}).mail_source == "graph")
-check("mail_source 认得出 outlook",
-      config.from_dict({"mail_source": "outlook"}).mail_source == "outlook")
-check("mail_source 写错时回落默认",
-      config.from_dict({"mail_source": "pop3"}).mail_source == "graph")
+          ("connect", "newest_message", "read_inbox", "collect_new_mail", "read_recent",
+           "pending_sum_commands", "untagged_reports", "write_categories", "send_html",
+           "logged_in", "describe", "backend_module", "BACKEND")))
+check("纯逻辑从 mail 门面原样导出（上层继续 from core import mail as outlook）",
+      all(getattr(mail_mod, name) is getattr(mailmeta, name) for name in
+          ("parse_sum_command", "is_report", "is_report_subject", "category_names",
+           "has_our_category", "merge_categories", "message_info", "note_once")))
+check("分类主列表那套 API 已彻底删除（不再有 masterCategories）",
+      not any(hasattr(mail_mod, name) for name in
+              ("ensure_categories", "ensure_sum_category", "existing_categories",
+               "our_category_colors", "expected_category_colors", "CATEGORY_COLORS",
+               "SUM_COLOR", "CATEGORY_SCOPE", "report_filter", "REPORT_FILTER")))
+check("COM 那套 API 也已删除（没有 win32com / 启动 Outlook 的入口）",
+      not any(hasattr(mail_mod, name) for name in
+              ("_process_running", "parent_process", "integrity_level", "outlook_exe_path",
+               "_launch_allowed", "_launch_outlook", "_minimize_outlook",
+               "_outlook_process_running", "LAUNCH_BACKOFF_SECONDS", "OUTLOOK_START_TIMEOUT")))
+check("config 里不再有后端切换开关（避免又漂回两条路）",
+      not hasattr(config.from_dict({}), "mail_source"))
+check("mail.describe() 说得清当前后端", "graph" in mail_mod.describe())
 check("graph 段有默认值",
       config.from_dict({}).graph.tenant == "common"
       and config.from_dict({}).graph.open_browser is True)
@@ -1132,10 +1141,10 @@ check("from 是字符串时也能取到地址", _info2["sender"] == "someone@ust
 check("几乎空的邮件也不炸", graph_mod.normalize({})["subject"] == "(no subject)")
 
 _gmsg = graph_mod.GraphMessage(_raw, client=None)
-check("GraphMessage 扮得像 COM MailItem（Subject/Categories/EntryID）",
+check("GraphMessage 扮得像一封邮件对象（Subject/Categories/EntryID）",
       _gmsg.Subject == "Homework 2" and _gmsg.Categories == "S"
       and _gmsg.EntryID == "AAMkAGI2")
-check("core.outlook 的纯逻辑能直接用在 GraphMessage 上",
+check("mailmeta 的纯逻辑能直接用在 GraphMessage 上",
       outlook.message_info(_gmsg)["sender"] == "notifications@instructure.com"
       and outlook.category_names(_gmsg) == ["S"]
       and outlook.has_our_category(_gmsg) is True
@@ -1298,9 +1307,15 @@ try:
     graph_mod.GraphMail.me = lambda self: {"displayName": "Tester",
                                            "userPrincipalName": "t@example.com"}
     for _ in range(3):
-        graph_mod.connect(auto_launch=False, log=_conn_logs.append)
+        graph_mod.connect(log=_conn_logs.append)
     check("连续三次连接只打一行 connected as（监听每 30 秒一轮，不能刷屏）",
           len([line for line in _conn_logs if "connected as" in line]) == 1)
+
+    _conn_logs.clear()
+    mailmeta._seen_notices.clear()        # 清掉抑制状态，下面单独看 read-only 的提示
+    graph_mod.connect(read_only=True, log=_conn_logs.append)
+    check("read_only（run.py check 走的路）会说明只申请只读权限",
+          any("read-only" in line for line in _conn_logs))
 finally:
     graph_mod.get_token = _saved_get_token
     graph_mod._settings = _saved_settings
@@ -1335,60 +1350,81 @@ try:
 finally:
     ai.ask_json = _saved_ask
 
-print("[20] 分类主列表建不出来时：只提示一次，判级与写回照常")
-_saved_blocked = graph_mod._category_create_blocked
+print("[21] v3.0.0 回归：Graph 的纯函数 + run.py 不再依赖被删的分类 API")
 
+# ── token 缓存：v3 起 access_token 带过期时间，未过期直接复用 ──────────
+_now = 1_800_000_000.0
+check("cached_token：未过期直接复用缓存里的 access_token",
+      graph_mod.cached_token({"access_token": "t", "expires_at": _now + 3600},
+                             now=_now) == "t")
+check("cached_token：已过期 → None（会去刷新）",
+      graph_mod.cached_token({"access_token": "t", "expires_at": _now - 1},
+                             now=_now) is None)
+check("cached_token：进入提前刷新余量（TOKEN_MARGIN）就当作过期",
+      graph_mod.cached_token({"access_token": "t", "expires_at": _now + 120},
+                             now=_now) is None)
+check("cached_token：缺 access_token / 缺 expires_at / 空 token → None",
+      graph_mod.cached_token({}, now=_now) is None
+      and graph_mod.cached_token({"access_token": "t"}, now=_now) is None
+      and graph_mod.cached_token({"access_token": "", "expires_at": _now + 3600},
+                                 now=_now) is None)
+check("cached_token：expires_at 不是数字 → None（不抛异常）",
+      graph_mod.cached_token({"access_token": "t", "expires_at": "soon"},
+                             now=_now) is None)
 
-class _Cat403Client:
-    """模拟「只有 Mail.ReadWrite、没有 MailboxSettings.ReadWrite」的登录。"""
+# ── 限流退避：优先用服务端给的 Retry-After ────────────────────────
+check("_retry_delay：429 且带 Retry-After 时按它等",
+      graph_mod._retry_delay(429, {"Retry-After": "7"}, 0) == 7.0)
+check("_retry_delay：没有该头时返回有限正数（指数退避，封顶 30 秒）",
+      0 < graph_mod._retry_delay(503, {}, 0) <= 30
+      and 0 < graph_mod._retry_delay(503, {}, 9) <= 30)
+check("_retry_delay：Retry-After 非数字 / 负数 / 过大时不采信，回落到指数退避",
+      0 < graph_mod._retry_delay(429, {"Retry-After": "soon"}, 1) <= 30
+      and 0 < graph_mod._retry_delay(429, {"Retry-After": "-5"}, 1) <= 30
+      and 0 < graph_mod._retry_delay(429, {"Retry-After": "999"}, 1) <= 30)
 
-    def master_categories(self):
-        return [{"displayName": "Red category"}]
+# ── GraphSession 的 10 秒缓存按 days 区分（窗口变宽重取、变窄本地过滤）──
+class _WindowClient:
+    """记录每次取数的 days 参数；返回两封邮件（20 天前 / 1 天前）。"""
 
-    def ensure_master_category(self, name):
-        raise graph_mod.GraphError("HTTP 403 ErrorAccessDenied: Access is denied.", 403)
-
-
-class _CatHaveClient:
     def __init__(self):
-        self.attempts = []
+        self.calls = []
+        self._raws = []
+        for entry_id, days_ago in (("W-1", 20), ("W-2", 1)):
+            self._raws.append({
+                "id": entry_id, "subject": entry_id,
+                "receivedDateTime": (datetime.utcnow() - timedelta(days=days_ago))
+                .strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "categories": [],
+                "from": {"emailAddress": {"name": "", "address": "a@b.c"}},
+            })
 
-    def master_categories(self):
-        return [{"displayName": n} for n in ("S", "A", "B", "C", "Sum")]
-
-    def ensure_master_category(self, name):
-        self.attempts.append(name)
-        return False
+    def inbox_raw(self, top=10, days=None, select=""):
+        self.calls.append(days)
+        return list(self._raws)
 
 
-try:
-    graph_mod._category_create_blocked = False
-    _c403 = _Cat403Client()
-    _ns403 = graph_mod.GraphSession(_c403)
-    _first = graph_mod.ensure_categories(_ns403)
-    check("缺权限时只返回一条聚合提示（不再是 4 行报错）",
-          len(_first) == 1 and "cannot create" in _first[0])
-    check("提示里说明这是正常现象（该权限多数租户要管理员批准）",
-          "administrator approval" in _first[0] and "Approval required" in _first[0])
-    check("提示里给出最省事的做法（自己在 Outlook 里建 5 个分类）",
-          "All Categories" in _first[0] and "Sum" in _first[0])
-    check("提示里仍然提到所需权限名，方便查证",
-          "MailboxSettings.ReadWrite" in _first[0])
-    check("之后不再反复尝试（不会每 30 秒刷屏）",
-          graph_mod.ensure_categories(_ns403) == [])
-    graph_mod._category_create_blocked = False
-    check("Sum 分类建不出来时不抛异常、只返回 False",
-          graph_mod.ensure_sum_category(_ns403) is False)
-    check("Sum 分类失败后也进入「不再重试」状态", graph_mod._category_create_blocked is True)
+_wclient = _WindowClient()
+_wsess = graph_mod.GraphSession(_wclient)
+check("GraphSession：先要 30 天窗口 → 两封都在、只请求一次",
+      len(_wsess.recent(days=30)) == 2 and _wclient.calls == [30])
+check("GraphSession：再要 7 天时复用缓存并本地过滤（不重新请求）",
+      len(_wsess.recent(days=7)) == 1 and _wclient.calls == [30])
+check("GraphSession：改要全量（窗口变宽）时重新请求，而不是拿 7 天的冒充",
+      len(_wsess.recent()) == 2 and _wclient.calls == [30, None])
 
-    graph_mod._category_create_blocked = False
-    _have = _CatHaveClient()
-    check("四个分类都在时不尝试创建",
-          graph_mod.ensure_categories(graph_mod.GraphSession(_have)) == []
-          and _have.attempts == [])
-finally:
-    graph_mod._category_create_blocked = _saved_blocked
+# ── 写回合并规则（被删掉的那套分类主列表代码不应该把这条规则一起带走）──
+check("merge_categories：只保留用户标签并追加新标签",
+      mailmeta.merge_categories(["S", "我的标签"], ["A"]) == ["我的标签", "A"])
 
-print(f"\n全部通过：{ok} 项")
+# ── run.py 的 check 不再依赖已删除的分类主列表函数 ────────────────
+import run as _run_mod  # noqa: E402
+
+check("run.py 的 check 不再依赖被删的分类函数",
+      hasattr(_run_mod.outlook, "ensure_categories") is False)
+check("run.py 用的就是 mail 门面（写回/连接都走同一个端口）",
+      _run_mod.outlook is outlook and hasattr(_run_mod, "cmd_check"))
+
 print("\n--- build_spec 实际产出（配置缺字段时的样子）---")
 print(classifier.build_spec(config.from_dict({"email": "a@b.c"})))
+print(f"\n全部通过：{ok} 项")

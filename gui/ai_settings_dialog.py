@@ -90,8 +90,13 @@ class AiSettingsDialog(tk.Toplevel):
             form, row, "base_url", ttk.Entry(form, textvariable=self._vars["base_url"], width=36)); row += 1
         self._fields["model"] = widgets.form_row(
             form, row, "model", ttk.Entry(form, textvariable=self._vars["model"], width=36)); row += 1
-        self._fields["api_key"] = widgets.form_row(
-            form, row, "api key", ttk.Entry(form, textvariable=self._vars["api_key"], width=36)); row += 1
+        self._api_key_entry = ttk.Entry(form, textvariable=self._vars["api_key"],
+                                        width=36, show="\u2022")
+        self._fields["api_key"] = widgets.form_row(form, row, "api key", self._api_key_entry); row += 1
+        self._var_show_key = tk.BooleanVar(value=False)
+        ttk.Checkbutton(form, text="show the key while typing", variable=self._var_show_key,
+                        command=self._toggle_key_visibility).grid(row=row, column=1, sticky="w")
+        row += 1
         self._fields["api_key_env"] = widgets.form_row(
             form, row, "api key env var",
             ttk.Entry(form, textvariable=self._vars["api_key_env"], width=36)); row += 1
@@ -321,15 +326,23 @@ class AiSettingsDialog(tk.Toplevel):
     def _on_test_fail(self, ex: BaseException) -> None:
         self._status.configure(text=f"Test failed: {ex}", fg=theme.DANGER)
 
+    def _toggle_key_visibility(self) -> None:
+        """API key 默认以圆点显示；想核对时再临时显示出来。"""
+        self._api_key_entry.configure(show="" if self._var_show_key.get() else "\u2022")
+
     def _save(self) -> None:
         self._collect_current()
-        self._cfg.ai_profiles = self._profiles
-        self._cfg.ai_active = self._active
+        # 先写盘成功，再改内存里的共享配置：保存失败时界面状态与磁盘保持一致
+        new_cfg = copy.deepcopy(self._cfg)
+        new_cfg.ai_profiles = dict(self._profiles)
+        new_cfg.ai_active = self._active
         try:
-            config.save(self._cfg)
+            config.save(new_cfg)
         except Exception as ex:
             messagebox.showerror("Could not save", f"{type(ex).__name__}: {ex}", parent=self)
             return
+        self._cfg.ai_profiles = new_cfg.ai_profiles
+        self._cfg.ai_active = new_cfg.ai_active
 
         if self._on_saved is not None:
             self._on_saved(self._cfg)

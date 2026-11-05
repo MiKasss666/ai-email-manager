@@ -22,3 +22,6 @@ EmailManager/
 
 # 发布用的压缩包
 *.zip
+
+# 本地技能目录（项目级 skill，属个人开发环境，不入库）
+.agents/

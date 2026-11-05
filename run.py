@@ -26,6 +26,7 @@ import sys
 from typing import List, Optional
 
 from core import ai, classifier, config, mail as outlook, summarizer
+from core.version import __version__
 
 
 def _setup_console() -> None:
@@ -41,6 +42,7 @@ def _setup_console() -> None:
 
 def cmd_providers(cfg: config.Config) -> int:
     """列出所有 AI 后端配置。不联网。"""
+    print(f"Email Manager v{__version__}")
     print(f"Config file: {config.config_path()}")
     print(f"Active: ai.active = \"{cfg.ai_active}\"\n")
     for name, profile in cfg.ai_profiles.items():
@@ -57,6 +59,7 @@ def cmd_providers(cfg: config.Config) -> int:
 
 def cmd_check(cfg: config.Config, test_ai: bool = False) -> int:
     """只读自检：不读信、不发信、不改分类。"""
+    print(f"Email Manager v{__version__}")
     print(f"Config file: {config.config_path()}")
 
     problems = cfg.problems()
@@ -99,38 +102,20 @@ def cmd_check(cfg: config.Config, test_ai: bool = False) -> int:
                 print(f"[AI] connection test failed: {ex}")
                 code = 1
 
-    # ── Outlook ───────────────────────────────────────────────
+    # ── Mailbox（只读：只申请 Mail.Read，不写任何东西）────────────
+    print(f"[Mail] backend: {outlook.describe()}")
     try:
-        _app, ns = outlook.connect(auto_launch=False)   # 只读自检不该顺手启动 Outlook
-        inbox = ns.GetDefaultFolder(outlook.OL_FOLDER_INBOX)
-        print(f"[Mail] connected; inbox \"{inbox.Name}\" holds {inbox.Items.Count} mail(s)")
-        names = outlook.existing_categories(ns)
-        missing = [level for level in config.LEVELS if level not in names]
-        if outlook.SUM_NAME not in names:
-            missing.append(outlook.SUM_NAME)
-        print(f"[Mail] existing categories: {', '.join(names) or '(none)'}")
-        print(f"[Mail] missing categories: {', '.join(missing) or '(none, S/A/B/C/Sum all present)'}")
-        if missing:
-            print("          (classify creates missing categories automatically)")
-
-        colors = outlook.our_category_colors(ns)
-        if colors:
-            expected = outlook.expected_category_colors()
-            wrong = {name: value for name, value in colors.items()
-                     if expected.get(name) != value}
-            if wrong:
-                print(f"[Mail] colour mismatch: {wrong} "
-                      f"(expected {expected}) - fixed automatically on the next classify")
-            else:
-                print("[Mail] category colours: all correct")
+        app, _ns = outlook.connect(read_only=True, log=print)
+        me = app.me()
+        folder = app.inbox_folder()
+        print(f"[Mail] signed in as {me.get('displayName')} "
+              f"<{me.get('userPrincipalName') or me.get('mail')}>")
+        print(f"[Mail] inbox \"{folder.get('displayName')}\" holds "
+              f"{folder.get('totalItemCount')} mail(s)")
     except Exception as ex:
         print(f"[Mail] connection failed: {ex}")
-        if outlook.BACKEND == "outlook":
-            print("          Make sure Outlook classic (desktop) is installed and has been "
-                  "started at least once; the new Outlook does not expose COM.")
-        else:
-            print("          Check your network connection and the sign-in state; delete "
-                  "graph_token.json next to config.json to sign in again.")
+        print("          Check your network connection and the sign-in state; delete "
+              "graph_token.json next to config.json to sign in again.")
         code = 1
 
     return code
@@ -141,7 +126,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="run.py",
-        description="AI email manager (core, command line)",
+        description=f"Email Manager v{__version__} (core, command line; Microsoft Graph backend)",
         epilog="Examples: py -3 run.py check --ai | py -3 run.py classify --days 7 --dry-run | "
                "py -3 run.py summarize sa",
     )

@@ -1,12 +1,12 @@
-﻿cff-version: 1.2.0
+cff-version: 1.2.0
 message: "If you use this software in coursework, a group project or a paper, please cite it as below. / 如果你在课程作业、小组项目或论文里使用了本项目，请按下面的信息注明来源。"
 title: "Email Manager — AI 邮件管理助手"
-abstract: "An AI email assistant that sorts an Outlook inbox into S/A/B/C and emails a summary report, built for HKUST students. It talks to Microsoft Graph directly, so desktop Outlook is not required. / 面向香港科技大学（HKUST）学生的 Outlook 收件箱自动分级（S/A/B/C）与总结工具。直接对接 Microsoft Graph，不需要安装桌面版 Outlook。"
+abstract: "An AI email assistant that sorts a Microsoft mailbox into S/A/B/C and emails a summary report, built for HKUST students. It talks to Microsoft Graph directly, so nothing has to be installed besides the app itself. / 面向香港科技大学（HKUST）学生的邮箱自动分级（S/A/B/C）与总结工具。直接对接 Microsoft Graph，除程序本身外不需要安装任何东西。"
 authors:
-  - name: "your-account@hkust"
+  - name: "pkfok"
     affiliation: "The Hong Kong University of Science and Technology (HKUST)"
-version: 2.0.6
-date-released: 2026-10-20
+version: 3.0.0
+date-released: 2026-11-05
 license: MIT
 repository-code: "https://github.com/MiKasss666/ai-email-manager"
 url: "https://github.com/MiKasss666/ai-email-manager"

@@ -3,8 +3,10 @@ chcp 65001 >nul
 REM ============================================================
 REM  Launch from source (no exe involved, so SmartScreen never shows up)
 REM
-REM  Use this when Python + pywin32 are installed locally (dev / own use).
-REM  To hand the app to someone without Python, run build.bat first.
+REM  Use this when Python 3.9+ is installed locally (dev / own use).
+REM  There are NO third-party dependencies: the Microsoft Graph backend
+REM  uses the Python standard library only. To hand the app to someone
+REM  without Python, run build.bat first.
 REM
 REM  Want full error output? Open a terminal in this folder and run:
 REM      py -3 app.py
@@ -14,16 +16,15 @@ REM  local ANSI codepage, so non-ASCII comments get mangled into commands.
 REM ============================================================
 cd /d "%~dp0"
 
-echo Checking dependencies ...
-py -3 -c "import win32com.client" >nul 2>&1
+echo Checking Python ...
+py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)" >nul 2>&1
 if errorlevel 1 (
-    echo   pywin32 is missing, installing ...
-    py -3 -m pip install pywin32
-    if errorlevel 1 goto :fail
+    echo   Python 3.9+ was not found. Install it from https://www.python.org/downloads/
+    goto :fail
 )
 
 echo Pre-flight import check ...
-py -3 -c "import core.config, core.ai, core.classifier, core.summarizer, core.outlook, gui.main_window" 2>&1
+py -3 -c "import core.config, core.ai, core.classifier, core.summarizer, core.graph, gui.main_window" 2>&1
 if errorlevel 1 goto :fail
 
 echo Starting the interface ...

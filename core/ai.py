@@ -1,4 +1,4 @@
-"""core/ai.py — AI 传输层（后端无关，零第三方依赖）。
+﻿"""core/ai.py — AI 传输层（后端无关，零第三方依赖）。
 
 唯一职责：把一段提示词发给「用户自己配置的模型」，拿回文本或 JSON。
 
@@ -28,7 +28,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .config import AiProfile
 
@@ -109,7 +109,7 @@ def _call_with_deadline(work: Callable[[], Any], seconds: int, what: str) -> Any
         raise AiError(
             f"{what} did not answer within {seconds}s "
             f"(the connection was accepted but nothing came back — this is a problem on the "
-            f"provider's side, not with Outlook)", transient=True)
+            f"provider's side, not with the mailbox)", transient=True)
     if "error" in box:
         raise box["error"]
     return box["value"]

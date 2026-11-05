@@ -17,6 +17,7 @@ from tkinter import messagebox, ttk
 from typing import Any, Optional
 
 from core import ai, classifier, config, mail as outlook, summarizer
+from core.version import __version__
 
 from . import theme, watcher as watch_mod
 from .ai_settings_dialog import AiSettingsDialog
@@ -26,7 +27,7 @@ from .user_info_dialog import UserInfoDialog
 
 DEFAULT_DAYS = 7
 WATCHDOG_MS = 1000          # 状态栏每秒刷新一次
-STUCK_HINT_SECONDS = 90     # 超过这个时长还没结果，就提示用户去看 Outlook
+STUCK_HINT_SECONDS = 90     # 超过这个时长还没结果，就提示用户区分「卡 AI」还是「卡邮箱」
 
 
 class MainWindow:
@@ -58,13 +59,6 @@ class MainWindow:
         self.log.write(f"Config file: {config.config_path()}")
         self.log.write(f"Log file: {self.log.log_file() or '(disabled)'}")
         self.log.write(f"[env] mail backend: {outlook.describe()}")
-        level = outlook.integrity_level()
-        self.log.write(f"[env] security context: {level} integrity")
-        self.log.write(f"[env] launched by: {outlook.parent_process()}")
-        # 这条提示只对 COM 后端有意义（Graph 不走本机 COM，不受完整性级别影响）
-        if outlook.BACKEND == "outlook" and level in ("Low", "Untrusted"):
-            self.log.write("[env] WARNING: Outlook COM is blocked at this integrity level - "
-                           "launch Email Manager normally (not from a sandboxed shell/agent)")
         self._report_problems()
         self._refresh_status()
 
@@ -94,7 +88,7 @@ class MainWindow:
         inner = tk.Frame(card, bg=theme.CARD, padx=theme.PAD, pady=theme.PAD)
         inner.pack(fill="x")
 
-        tk.Label(inner, text="AI Email Manager", bg=theme.CARD, fg=theme.TEXT,
+        tk.Label(inner, text=f"AI Email Manager  ·  v{__version__}", bg=theme.CARD, fg=theme.TEXT,
                  font=theme.FONT_TITLE).pack(anchor="w")
         self._header_info = tk.Label(inner, text="", bg=theme.CARD, fg=theme.MUTED,
                                      font=theme.FONT, justify="left", anchor="w",
@@ -162,7 +156,7 @@ class MainWindow:
         tk.Label(row, text="seconds", bg=theme.CARD, fg=theme.TEXT,
                  font=theme.FONT).pack(side="left", padx=(4, 0))
 
-        # 卡死逃生口：Outlook 弹着对话框时 COM 会一直挂着，界面不能就此锁死
+        # 卡死逃生口：网络调用挂着不返回时，界面不能就此锁死
         ttk.Button(row, text="Force reset", command=self._force_reset).pack(side="right")
 
     # ── 状态展示 ──────────────────────────────────────────────
@@ -187,12 +181,12 @@ class MainWindow:
     def _watchdog(self) -> None:
         """每秒刷一次状态栏，并把「卡住」和「在跑」区分开。
 
-        Outlook 弹着对话框（选配置文件、安全提示）时，COM 调用会一直挂着 ——
+        邮箱/网络调用挂着不返回时（连接被接受但一直没响应）——
         既不返回也不报错。没有这个提示，用户只会看到界面不动却不知道原因。
 
-        提示文案按**当前阶段**给（runner.phase）：卡在 AI 和卡在 Outlook 的处理方式
-        完全不同。之前只会说"Outlook has not answered"，实测把"等 DeepSeek 回话"
-        误报成了 Outlook 的问题，让人白折腾 Outlook。
+        提示文案按**当前阶段**给（runner.phase）：卡在 AI 和卡在邮箱的处理方式
+        完全不同。之前只会说"the mailbox has not answered"，实测把"等 DeepSeek 回话"
+        误报成了邮箱的问题。
         """
         try:
             if self.runner.busy:
@@ -209,10 +203,9 @@ class MainWindow:
                                "Wait a bit, or click Force reset and try again later; you can also "
                                "switch to another backend in AI setting.")
                     else:
-                        why = ("The mailbox has not answered. With the legacy Outlook "
-                               "backend it is most likely showing a dialog (profile picker "
-                               "or security prompt) - bring Outlook to the front and dismiss "
-                               "it; with the Graph backend check your network connection.")
+                        why = ("The mailbox has not answered. Check your network connection "
+                               "and the Microsoft sign-in state; the watcher backs off and "
+                               "reconnects by itself once the mailbox is reachable again.")
                     self.log.write(f"[warn] {what} has not finished for {elapsed:.0f}s. {why} "
                                    f"If the task really is stuck, click Force reset.")
             else:
@@ -236,8 +229,8 @@ class MainWindow:
                 "Force reset",
                 f"A task has been running for {elapsed:.0f}s without finishing.\n\n"
                 f"This only unlocks the interface; the stuck operation itself cannot be "
-                f"cancelled. A stuck task is usually the mailbox waiting on a dialog "
-                f"(legacy Outlook backend) or a stalled network call.\n\n"
+                f"cancelled. A stuck task is usually a stalled network call or a hung "
+                f"AI request.\n\n"
                 f"Reset now?",
                 parent=self.root):
             return

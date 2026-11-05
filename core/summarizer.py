@@ -1,7 +1,7 @@
 """core/summarizer.py —【核心 2】邮件总结。
 
 职责：把最近 N 天里已分级的邮件，按级别整理成一份 HTML 报告发到自己邮箱。
-每封邮件配一句内容要点，报告里的主题是可点开的 outlook: 链接（点开直接跳回原邮件）。
+每封邮件配一句内容要点，报告里的主题是可点开的网页版链接（点开直接跳回原邮件）。
 报告邮件本身打黄色 Sum 分类，下次扫收件箱时会被自动跳过。
 """
 from __future__ import annotations
@@ -230,10 +230,8 @@ def send_report(app, ns, cfg: Config, emails: Sequence[Dict[str, Any]],
                 days: Optional[int] = None) -> str:
     """生成并发出报告邮件，返回主题。"""
     subject = build_subject(letters, cfg, days)
-    outlook.ensure_sum_category(ns)
     outlook.send_html(app, cfg.recipient, subject,
-                      build_html(emails, points, cfg, letters, days),
-                      categories=outlook.SUM_NAME)
+                      build_html(emails, points, cfg, letters, days))
     return subject
 
 

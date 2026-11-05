@@ -1,6 +1,6 @@
 """core/classifier.py —【核心 1】邮件分级。
 
-职责：邮件列表 → 每封的级别（S/A/B/C）+ 截止日期，并可写回 Outlook 分类。
+职责：邮件列表 → 每封的级别（S/A/B/C）+ 截止日期，并可写回邮件分类。
 
 分级规则不写死在代码里：规则文本由 config 现场拼装（build_spec），
 确定性的「我参与的课程 → S」也由 config 的课程列表生成。
@@ -20,7 +20,7 @@
 第 -1 步为什么必须让 AI 参与：只看发件人域名会漏 —— 学校事务经常由外部平台代发
 （Canvas 通知、问卷、报名/活动系统…），域名不是学校的，内容却是学校事务。
 反过来，域名命中的一定是学校邮件，所以那一类不问 AI，由代码直接认定。
-判为「不是学校邮件」的邮件不写回 Outlook（保持原样，不贴 S/A/B/C）。
+判为「不是学校邮件」的邮件不写回（保持原样，不贴 S/A/B/C）。
 
 第 1 步为什么必须由代码兜底：学院的真实身份常常**不在发件地址里** ——
 `advise@ust.hk` 的显示名才是 `SCI/HOME, School of Science`，而正文签名里的学院名
@@ -467,18 +467,17 @@ def classify(emails: Sequence[Dict[str, Any]], cfg: Config,
     return results
 
 
-# ── 写回 Outlook ──────────────────────────────────────────────────
+# ── 写回邮箱 ──────────────────────────────────────────────────
 def apply_verdicts(emails: Sequence[Dict[str, Any]], verdicts: Sequence[Optional[Verdict]],
                    log: Callable[..., None] = print,
                    should_stop: Optional[Callable[[], bool]] = None) -> Tuple[int, int, int]:
-    """把分级写回 Outlook：分类 + 仅「S 且加急」打红旗。返回 (成功, 失败, 跳过)。
+    """把分级写回邮箱：分类 + 仅「S 且加急」打红旗。返回 (成功, 失败, 跳过)。
 
     跳过 = 被判为「不是学校邮件」的：不写回、不贴标签，但**也不算失败** ——
     算失败会让监听以为这批没处理完，反复重试。
 
     should_stop：任务被放弃时返回 True → 逐封检查、立刻停止写邮箱。
-    这是 Force reset 之后最要紧的一件事：被放弃的线程可能拿着指向**已经退出的
-    Outlook 实例**的 COM 指针，继续写下去就是一片 RPC 报错（实际发生过）。
+    这是 Force reset 之后最要紧的一件事：被放弃的线程不该再往邮箱里写一个字。
     没写到的那些不算失败，调用方据此不推进基线，下一轮重来。
     """
     ok = failed = skipped = 0
@@ -497,7 +496,7 @@ def apply_verdicts(emails: Sequence[Dict[str, Any]], verdicts: Sequence[Optional
 
         flag = None
         if verdict.level == "S":
-            flag = outlook.OL_FLAG_MARKED if verdict.urgent else outlook.OL_FLAG_NONE
+            flag = outlook.FLAG_MARKED if verdict.urgent else outlook.FLAG_NONE
 
         subject = str(email.get("subject") or "")[:45]
         try:
@@ -543,18 +542,15 @@ def classify_inbox(cfg: Config, *, limit: Optional[int] = None, days: Optional[i
 
     dry_run=True 时只打印判定结果，绝不改邮件。
     force=True   时连已打过标签的邮件也重新判定（非学校邮件仍然不写回）。
-    phase        当前阶段的回调 —— 界面据此把「卡在 AI」和「卡在 Outlook」分开报，
-                 不再笼统地让用户去折腾 Outlook。
+    phase        当前阶段的回调 —— 界面据此把「卡在 AI」和「卡在邮箱」分开报，
+                 不再笼统地让用户去折腾邮件配置。
     """
     def _phase(text: str) -> None:
         if phase is not None:
             phase(text)
 
-    _phase("connecting to Outlook")
+    _phase("connecting to the mailbox")
     _app, ns = outlook.connect(log=log)
-
-    for change in outlook.ensure_categories(ns):
-        log(f"  {change}")
 
     emails = outlook.read_inbox(ns, limit=limit, days=days, skip_classified=not force, log=log)
     log(f"read {len(emails)} mail(s) to classify")
@@ -578,7 +574,7 @@ def classify_inbox(cfg: Config, *, limit: Optional[int] = None, days: Optional[i
         skipped = sum(1 for v in verdicts if v is not None and not v.is_school)
         failed = len(verdicts) - ok - skipped
     else:
-        _phase("writing categories to Outlook")
+        _phase("writing categories to the mailbox")
         ok, failed, skipped = apply_verdicts(emails, verdicts, log=log,
                                              should_stop=should_stop)
 
