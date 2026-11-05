@@ -3,6 +3,8 @@
 > 依据 **v3.0.0** 源码（commit `45ed398`，Graph-only 后端）绘制。
 > 源文件就是本 Markdown：GitHub / VS Code / Typora 可直接渲染 Mermaid。
 > 本地可视化版：双击同目录的 `flowchart.html`（离线可用），由 `build-flowchart-html.py` 生成。
+>
+![页面预览](preview.png)
 
 ## 目录
 
