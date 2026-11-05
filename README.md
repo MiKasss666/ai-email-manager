@@ -315,6 +315,7 @@ Exit codes: `0` success, `1` config or connection problem, `2` partial failure.
 | `requirements.txt` | No third-party packages — the app uses only the Python standard library |
 | `selftest.py` `guitest.py` | Tests: `py -3 selftest.py` (pure logic, no mailbox/AI); `py -3 guitest.py` (GUI smoke test) |
 | `CHANGELOG.md` | Version history |
+| `docs/FLOWCHART.md` | **Complete program flowcharts** (Mermaid — GitHub renders them). Offline version: open `docs/flowchart.html` (regenerate with `py -3 docs/build-flowchart-html.py`) |
 | `config.json` / `graph_token.json` / `watch_state.json` / `app.log` | **Created at runtime, contains your personal data — never redistribute** (already in `.gitignore`). `graph_token.json` holds the cached Microsoft sign-in credential. |
 
 ### Troubleshooting
@@ -694,6 +695,7 @@ py -3 run.py summarize [letters]  # 生成并发送总结报告；letters 如 s 
 | `requirements.txt` | 没有任何第三方依赖——程序只用 Python 标准库 |
 | `selftest.py` `guitest.py` | 测试：`py -3 selftest.py` 纯逻辑自测（不连邮箱、不调 AI）；`py -3 guitest.py` 界面冒烟 |
 | `CHANGELOG.md` | 版本历史 |
+| `docs/FLOWCHART.md` | **程序完整流程图**（Mermaid，GitHub 可直接渲染）。离线版：打开 `docs/flowchart.html`（重新生成：`py -3 docs/build-flowchart-html.py`） |
 | `config.json` / `graph_token.json` / `watch_state.json` / `app.log` | **运行时生成，含你的个人信息，不要一起分发**（已在 `.gitignore` 里排除）。`graph_token.json` 里是登录 Microsoft 的凭据缓存。 |
 
 ### 故障排查
