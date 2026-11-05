@@ -25,3 +25,6 @@ EmailManager/
 
 # 本地技能目录（项目级 skill，属个人开发环境，不入库）
 .agents/
+
+# PDF 构建中间文件
+docs/flowchart.print.html

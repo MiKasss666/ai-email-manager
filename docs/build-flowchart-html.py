@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """把 FLOWCHART.md 渲染成可离线查看的 flowchart.html。
 
 单一真源是 FLOWCHART.md：本脚本读取它，把 Markdown 内嵌进 HTML 模板，
@@ -43,6 +43,25 @@ TEMPLATE = """<!DOCTYPE html>
                color: #475569; background: #fff; }
   #err { display: none; background: #fee2e2; border: 1px solid #ef4444; color: #7f1d1d;
          padding: 12px 14px; margin: 16px 0; border-radius: 8px; white-space: pre-wrap; }
+
+  /* 打印 / PDF：A4 横向、图表尽量不跨页切断 */
+  @media print {
+    @page { size: A4 landscape; margin: 10mm 12mm; }
+    body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    header { position: static; box-shadow: none; }
+    main { max-width: none; margin: 0; padding: 0; }
+    h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
+    #content > h2 { break-before: page; page-break-before: always; }
+    #content > ol { columns: 2; column-gap: 14mm; }
+    hr { display: none !important; }
+    .mermaid { break-inside: avoid; page-break-inside: avoid; border: none;
+               padding: 2mm 0; margin: 3mm 0 6mm; text-align: center; }
+    .mermaid svg { max-width: 100% !important; max-height: 145mm !important; width: auto !important; height: auto !important; }
+    table, pre, blockquote { break-inside: avoid; page-break-inside: avoid; }
+    a { color: inherit; text-decoration: none; }
+    #content img { display: none !important; }   /* 预览图只给 GitHub 看，不占 PDF 页 */
+    #err { display: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -111,7 +130,7 @@ mermaid.run({ querySelector: ".mermaid" }).then(() => {
 def main() -> int:
     md_path = os.path.join(HERE, "FLOWCHART.md")
     out_path = os.path.join(HERE, "flowchart.html")
-    with io.open(md_path, "r", encoding="utf-8") as handle:
+    with io.open(md_path, "r", encoding="utf-8-sig") as handle:
         markdown = handle.read()
     mermaid_blocks = len(re.findall(r"```mermaid", markdown))
     html = TEMPLATE.replace("__MD_JSON__", json.dumps(markdown, ensure_ascii=False))

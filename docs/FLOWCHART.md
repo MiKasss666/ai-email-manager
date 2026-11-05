@@ -1,8 +1,8 @@
-﻿# Email Manager v3.0.0 · 程序完整流程图
+# Email Manager v3.0.0 · 程序完整流程图
 
 > 依据 **v3.0.0** 源码（commit `45ed398`，Graph-only 后端）绘制。
 > 源文件就是本 Markdown：GitHub / VS Code / Typora 可直接渲染 Mermaid。
-> 本地可视化版：双击同目录的 `flowchart.html`（离线可用），由 `build-flowchart-html.py` 生成。
+> 本地可视化版：双击同目录的 `flowchart.html`（离线可用），由 `build-flowchart-html.py` 生成；PDF 版：`flowchart.pdf`（A4 横向，重新生成：`docs/build-pdf.ps1`）。
 >
 ![页面预览](preview.png)
 
